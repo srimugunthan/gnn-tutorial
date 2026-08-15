@@ -1,0 +1,140 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Lesson 5: Stacking Layers and the Receptive Field</title>
+  <link rel="stylesheet" href="../assets/style.css">
+  <script src="../assets/quiz.js"></script>
+</head>
+<body>
+
+<div class="lesson-number">Lesson 5</div>
+<h1>Stacking Layers and the Receptive Field</h1>
+
+<p>Lesson 4 defined a single message-passing layer: gather from direct neighbors, aggregate, update. Lesson 3 casually referred to "L message-passing layers" without saying what L actually buys you. This lesson answers that: depth in a GNN controls exactly how far information can travel across the graph, in a way that maps directly onto something you already understand from CNNs &mdash; the receptive field.</p>
+
+<h2>One layer, one hop</h2>
+
+<p>After a single message-passing layer, node i's new embedding h<sub>i</sub><sup>(1)</sup> is a function of h<sub>i</sub><sup>(0)</sup> and {h<sub>j</sub><sup>(0)</sup> : j &isin; N(i)} &mdash; itself and its immediate (1-hop) neighbors, and nothing else. A node two hops away has had zero influence on h<sub>i</sub><sup>(1)</sup>, because it never appeared in any message i received.</p>
+
+<h2>Two layers, two hops</h2>
+
+<p>Now stack a second layer. Computing h<sub>i</sub><sup>(2)</sup> requires the layer-1 embeddings of i's neighbors: {h<sub>j</sub><sup>(1)</sup> : j &isin; N(i)}. But each of those h<sub>j</sub><sup>(1)</sup> was itself built from <em>j's</em> own 1-hop neighbors in the previous layer &mdash; which includes nodes that are two hops away from i. Information from a 2-hop neighbor reaches i indirectly, by first being folded into an intermediate neighbor's embedding, then relayed to i.</p>
+
+<div class="key-idea">
+  <strong>Key idea:</strong> After k layers, h<sub>i</sub><sup>(k)</sup> is a function of every node within i's <strong>k-hop neighborhood</strong> &mdash; and, generically, of nothing farther away. This set of nodes that can possibly influence h<sub>i</sub><sup>(k)</sup> is called i's <strong>receptive field</strong>, borrowing the term directly from CNNs: stacking k convolutional layers with 3&times;3 kernels grows a pixel's receptive field by one ring each time, exactly the way stacking k message-passing layers grows a node's receptive field by one hop each time.
+</div>
+
+<h2>Worked example: a 2-layer receptive field</h2>
+
+<p>Take a small tree rooted at a target node T, with three 1-hop neighbors (A, B, C), each of which has its own further neighbor (A1, B1, C1) two hops from T:</p>
+
+<figure>
+  <svg viewBox="0 0 420 320" width="100%" xmlns="http://www.w3.org/2000/svg">
+    <line x1="210" y1="252" x2="210" y2="188" stroke="#1a1a2e" stroke-width="2"/>
+    <line x1="222" y1="256" x2="308" y2="238" stroke="#1a1a2e" stroke-width="2"/>
+    <line x1="198" y1="256" x2="112" y2="238" stroke="#1a1a2e" stroke-width="2"/>
+    <line x1="210" y1="154" x2="210" y2="86" stroke="#6c757d" stroke-width="2" stroke-dasharray="5,4"/>
+    <line x1="334" y1="220" x2="378" y2="162" stroke="#6c757d" stroke-width="2" stroke-dasharray="5,4"/>
+    <line x1="86" y1="220" x2="42" y2="162" stroke="#6c757d" stroke-width="2" stroke-dasharray="5,4"/>
+
+    <circle cx="210" cy="270" r="20" fill="#d8f3dc" stroke="#2d6a4f" stroke-width="2.5"/>
+    <text x="210" y="276" text-anchor="middle" font-size="15" font-family="Georgia, serif">T</text>
+
+    <circle cx="210" cy="170" r="16" fill="#fff3cd" stroke="#ffc107" stroke-width="2"/>
+    <text x="210" y="175" text-anchor="middle" font-size="13" font-family="Georgia, serif">A</text>
+    <circle cx="320" cy="230" r="16" fill="#fff3cd" stroke="#ffc107" stroke-width="2"/>
+    <text x="320" y="235" text-anchor="middle" font-size="13" font-family="Georgia, serif">B</text>
+    <circle cx="100" cy="230" r="16" fill="#fff3cd" stroke="#ffc107" stroke-width="2"/>
+    <text x="100" y="235" text-anchor="middle" font-size="13" font-family="Georgia, serif">C</text>
+
+    <circle cx="210" cy="70" r="14" fill="white" stroke="#6c757d" stroke-width="2"/>
+    <text x="210" y="75" text-anchor="middle" font-size="12" font-family="Georgia, serif">A1</text>
+    <circle cx="392" cy="148" r="14" fill="white" stroke="#6c757d" stroke-width="2"/>
+    <text x="392" y="153" text-anchor="middle" font-size="12" font-family="Georgia, serif">B1</text>
+    <circle cx="28" cy="148" r="14" fill="white" stroke="#6c757d" stroke-width="2"/>
+    <text x="28" y="153" text-anchor="middle" font-size="12" font-family="Georgia, serif">C1</text>
+  </svg>
+  <figcaption>Solid edges: T's 1-hop neighbors (green target, amber ring). Dashed edges: 2-hop neighbors reached only through A, B, or C (white ring). A 2-layer GNN's receptive field for T covers all seven nodes; a 1-layer GNN's covers only T, A, B, C.</figcaption>
+</figure>
+
+<pre><code># layer 1: every node absorbs its direct neighbors
+h_A^(1) depends on {A, T, A1}
+h_T^(1) depends on {T, A, B, C}          # T's receptive field: 1 hop
+
+# layer 2: T absorbs its neighbors' layer-1 states
+h_T^(2) depends on h_A^(1), h_B^(1), h_C^(1), h_T^(1)
+        = depends on {T, A, B, C, A1, B1, C1}   # T's receptive field: 2 hops</code></pre>
+
+<p>Notice A1 never appears directly in any message T receives &mdash; it enters only because it was already baked into h<sub>A</sub><sup>(1)</sup> by the time T reads it. This chaining is exactly why depth matters: each additional layer lets information relay one hop further before it reaches T.</p>
+
+<h2>The computation graph</h2>
+
+<p>Unrolling this by hand, as above, produces a tree rooted at the target node &mdash; T's <strong>computation graph</strong>. This is a genuinely useful way to think about any single node's forward pass: it's a k-layer-deep tree where the root is the node you care about, and the leaves are its k-hop neighbors. (Distill's "Understanding Convolutions on Graphs" frames the same idea as repeatedly applying a 1-hop localized convolution K times to grow the effective receptive field to K hops &mdash; identical idea, spatial-convolution framing.)</p>
+
+<h2>How deep should you go?</h2>
+
+<p>More hops sounds strictly better &mdash; more context should mean a better-informed prediction &mdash; but two practical constraints push back:</p>
+
+<ul>
+  <li><strong>Cost.</strong> A node's k-hop receptive field can grow exponentially with the graph's branching factor (average degree). For a node with degree d, a naive k-hop expansion touches up to O(d<sup>k</sup>) nodes &mdash; this is why GraphSAGE (Lesson 8) samples a fixed number of neighbors per layer rather than using the full neighborhood.</li>
+  <li><strong>Diminishing (and eventually harmful) returns.</strong> Real-world graphs are often "small-world": most node pairs are separated by surprisingly few hops, so a handful of layers (commonly 2&ndash;4) already covers most of the graph. Pushing depth further doesn't just get expensive &mdash; it actively degrades quality, which is Lesson 6's entire subject.</li>
+</ul>
+
+<div class="analogy">
+  <strong>Analogy:</strong> This mirrors the CNN depth-vs-receptive-field trade-off you already know, but with a twist: an image's grid has a fixed branching factor (a 3&times;3 kernel always looks at 8 neighbors), so a CNN's receptive field grows predictably and linearly in area. A graph's degree varies node to node, so the receptive field's growth rate is irregular and can explode for high-degree "hub" nodes &mdash; something images never have to deal with.
+</div>
+
+<h2>Check your understanding</h2>
+
+<div class="quiz">
+  <p class="quiz-question">1. In the worked tree example, why does node A1's feature influence h_T after 2 layers but not after 1 layer?</p>
+  <ul class="quiz-options">
+    <li data-correct="true">It reaches T only via A's layer-1 state</li>
+    <li data-correct="false">It reaches T only via T's own features</li>
+    <li data-correct="false">It reaches T only via a self-loop edge</li>
+    <li data-correct="false">It reaches T only via the readout step</li>
+  </ul>
+  <div class="quiz-explanation">A1 is two hops from T. After layer 1, A1's feature has only been folded into A's embedding. Only when T aggregates A's layer-1 embedding during layer 2 does A1's information indirectly reach T.</div>
+</div>
+
+<div class="quiz">
+  <p class="quiz-question">2. Stacking a GNN to exactly k layers grows each node's receptive field to cover which set of nodes?</p>
+  <ul class="quiz-options">
+    <li data-correct="true">Every node within k hops</li>
+    <li data-correct="false">Every node in the graph</li>
+    <li data-correct="false">Only the k nearest edges</li>
+    <li data-correct="false">Only nodes with k neighbors</li>
+  </ul>
+  <div class="quiz-explanation">Each layer relays information one additional hop, so after k layers a node's embedding is a function of (generically) every node reachable within k hops &mdash; not the whole graph, unless the graph's diameter happens to be &le; k.</div>
+</div>
+
+<div class="quiz">
+  <p class="quiz-question">3. Why can a node's k-hop receptive field grow far more unpredictably than a CNN pixel's receptive field?</p>
+  <ul class="quiz-options">
+    <li data-correct="true">Node degree varies across the graph</li>
+    <li data-correct="false">Node features vary across the graph</li>
+    <li data-correct="false">Edge weights vary across the graph</li>
+    <li data-correct="false">Layer count varies across the graph</li>
+  </ul>
+  <div class="quiz-explanation">A CNN kernel always has a fixed, uniform branching factor (e.g., 8 neighbors per pixel), so receptive field growth is predictable. A graph's degree distribution is irregular, so high-degree "hub" nodes can pull in vastly more nodes per hop than low-degree ones.</div>
+</div>
+
+<h2>Primary source</h2>
+
+<div class="source-link">
+  Read: William L. Hamilton's <a href="https://www.cs.mcgill.ca/~wlh/grl_book/" target="_blank">"Graph Representation Learning"</a>, <strong>Section 5.2</strong> ("Generalized Neighborhood Aggregation"), for the formal treatment of stacking layers. For the CNN-style framing of receptive-field growth via repeated localized convolutions, see Sanchez-Lengeling et al.'s <a href="https://distill.pub/2021/understanding-gnns/" target="_blank">"Understanding Convolutions on Graphs"</a> (Distill, 2021), <strong>Section 6</strong>.
+</div>
+
+<div class="followup">
+  Questions about anything in this lesson? Ask your teacher &mdash; run <code>/teach</code> and ask about whatever is unclear. Next up: <strong>Lesson 6 &mdash; Over-smoothing and the Depth Problem</strong>, where we see why "just add more layers" backfires.
+</div>
+
+<div class="nav-links">
+  <a href="0004-message-passing.html">&larr; Lesson 4: Message Passing</a>
+  <a href="0006-over-smoothing-and-depth-problem.html">Lesson 6: Over-smoothing and the Depth Problem &rarr;</a>
+</div>
+
+</body>
+</html>

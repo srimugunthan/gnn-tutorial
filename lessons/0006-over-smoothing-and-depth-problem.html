@@ -1,0 +1,153 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Lesson 6: Over-smoothing and the Depth Problem</title>
+  <link rel="stylesheet" href="../assets/style.css">
+  <script src="../assets/quiz.js"></script>
+</head>
+<body>
+
+<div class="lesson-number">Lesson 6</div>
+<h1>Over-smoothing and the Depth Problem</h1>
+
+<p>Lesson 5 established that stacking k layers grows a node's receptive field to k hops, and made it sound like a free lunch: more layers, more context, better predictions. In practice, GNN accuracy on node classification typically <em>peaks</em> at 2&ndash;4 layers and then falls off a cliff as you add more. This lesson explains why, and what practitioners actually do about it.</p>
+
+<h2>The core failure mode: representational collapse</h2>
+
+<p>Recall from Lesson 4 that a GCN-style update averages a node's own features with its neighbors' features at every layer. Li, Han &amp; Wu (2018) made a sharp observation about what this operation actually is: graph convolution of this form is a special case of <strong>Laplacian smoothing</strong>, the classical technique for denoising a signal defined over a graph by repeatedly replacing each node's value with a (weighted) average of itself and its neighbors.</p>
+
+<p>Laplacian smoothing is exactly what you want <em>once</em> &mdash; it's a low-pass filter that blurs out noise while keeping the broad structure of the signal. But apply it over and over, and it keeps removing high-frequency detail every single time. On a connected graph, repeated smoothing provably drives every node's representation toward the same fixed point (a value proportional to node degree, independent of the original input features) as the number of layers grows &mdash; a mathematical convergence result, not just an empirical tendency. This is <strong>over-smoothing</strong>: node embeddings that started out distinguishable become progressively harder, then impossible, to tell apart as depth increases.</p>
+
+<figure>
+  <svg viewBox="0 0 640 220" width="100%" xmlns="http://www.w3.org/2000/svg">
+    <g>
+      <rect x="10" y="10" width="180" height="160" rx="6" fill="none" stroke="#dee2e6" stroke-width="1.5"/>
+      <circle cx="50" cy="50" r="10" fill="#2d6a4f"/>
+      <circle cx="150" cy="50" r="10" fill="#ffc107"/>
+      <circle cx="50" cy="130" r="10" fill="#1971c2"/>
+      <circle cx="150" cy="130" r="10" fill="#6c757d"/>
+      <text x="100" y="192" text-anchor="middle" font-size="12" fill="#6c757d" font-family="Georgia, serif">k = 1 layer</text>
+    </g>
+    <g transform="translate(220,0)">
+      <rect x="10" y="10" width="180" height="160" rx="6" fill="none" stroke="#dee2e6" stroke-width="1.5"/>
+      <circle cx="85" cy="75" r="10" fill="#2d6a4f"/>
+      <circle cx="115" cy="65" r="10" fill="#ffc107"/>
+      <circle cx="80" cy="105" r="10" fill="#1971c2"/>
+      <circle cx="120" cy="110" r="10" fill="#6c757d"/>
+      <text x="100" y="192" text-anchor="middle" font-size="12" fill="#6c757d" font-family="Georgia, serif">k = 4 layers</text>
+    </g>
+    <g transform="translate(440,0)">
+      <rect x="10" y="10" width="180" height="160" rx="6" fill="none" stroke="#dee2e6" stroke-width="1.5"/>
+      <circle cx="97" cy="87" r="10" fill="#2d6a4f" opacity="0.85"/>
+      <circle cx="102" cy="89" r="10" fill="#ffc107" opacity="0.85"/>
+      <circle cx="99" cy="92" r="10" fill="#1971c2" opacity="0.85"/>
+      <circle cx="101" cy="90" r="10" fill="#6c757d" opacity="0.85"/>
+      <text x="100" y="192" text-anchor="middle" font-size="12" fill="#6c757d" font-family="Georgia, serif">k = 10 layers</text>
+    </g>
+  </svg>
+  <figcaption>Four nodes' embeddings, projected to 2D, as depth increases. Each repeated round of neighbor-averaging squeezes the points closer together until they're nearly indistinguishable.</figcaption>
+</figure>
+
+<div class="analogy">
+  <strong>Analogy:</strong> This is the graph-signal equivalent of repeatedly Gaussian-blurring an image. One blur pass removes sensor noise and looks fine. Apply the same blur kernel a hundred times and the image converges to a flat, featureless gray &mdash; every pixel's value approaches the same global average, and the picture (the useful signal) is gone. GCN layers are, structurally, a blur kernel defined over the graph instead of the pixel grid.
+</div>
+
+<h2>Why this hurts learning</h2>
+
+<p>Node classification depends on nodes being distinguishable: a classifier can only separate class A from class B if their embeddings actually differ. Once over-smoothing sets in, h<sub>i</sub> stops carrying much information about node i specifically and starts reflecting mostly the local graph structure (degree, connected component) &mdash; the same collapse for every node regardless of its original label. Empirically, this is exactly what's observed: GCN accuracy on citation-network node classification tends to peak around 2&ndash;3 layers and degrades sharply beyond roughly 6&ndash;10, well before the receptive field has even reached most of the graph.</p>
+
+<div class="key-idea">
+  <strong>Key idea:</strong> Depth and over-smoothing are in tension with the receptive-field argument from Lesson 5. More layers give a node access to more of the graph, but every additional layer is also another round of smoothing. The practical range where "more context" outweighs "more blurring" is usually narrow &mdash; a handful of layers, not dozens.
+</div>
+
+<h2>Mitigations</h2>
+
+<p>None of these change the fact that message passing smooths; they change how much, how fast, or add a path around it:</p>
+
+<table style="width:100%; border-collapse:collapse; margin:1rem 0; font-size:0.9rem;">
+  <thead>
+    <tr style="border-bottom:2px solid var(--border); text-align:left;">
+      <th style="padding:0.5rem;">Mitigation</th>
+      <th style="padding:0.5rem;">Idea</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr style="border-bottom:1px solid var(--border);">
+      <td style="padding:0.5rem;">Fewer layers</td>
+      <td style="padding:0.5rem;">Use only as many layers as the task's effective receptive field needs (Lesson 5) &mdash; often 2&ndash;4 is enough given small graph diameters, so simply not over-building depth sidesteps the problem.</td>
+    </tr>
+    <tr style="border-bottom:1px solid var(--border);">
+      <td style="padding:0.5rem;">Residual / skip connections</td>
+      <td style="padding:0.5rem;">Re-inject an earlier-layer (or the original, layer-0) embedding at each layer, e.g. GCNII's initial-residual design, so the identity signal isn't fully washed out by repeated smoothing.</td>
+    </tr>
+    <tr style="border-bottom:1px solid var(--border);">
+      <td style="padding:0.5rem;">Normalization &mdash; PairNorm</td>
+      <td style="padding:0.5rem;">Rescale node embeddings after each layer so the total pairwise distance between all nodes is held roughly constant, directly counteracting the tendency of embeddings to converge (Zhao &amp; Akoglu, 2019).</td>
+    </tr>
+    <tr>
+      <td style="padding:0.5rem;">Stochastic edges &mdash; DropEdge</td>
+      <td style="padding:0.5rem;">Randomly remove a fraction of edges at every training step, which both slows the rate of smoothing and acts as data augmentation against overfitting (Rong et al., 2020).</td>
+    </tr>
+  </tbody>
+</table>
+
+<div class="key-idea">
+  <strong>Key idea:</strong> Notice the family resemblance to ResNets. Over-smoothing in deep GNNs and vanishing/degrading signal in very deep plain CNNs share the same shape of problem &mdash; each layer's transformation erodes something useful about the input &mdash; and skip connections are a shared-lineage fix in both settings. The graph-specific twist is that the eroding force here is smoothing (a low-pass filter), not just optimization difficulty.
+</div>
+
+<p>In practice, most GNNs you'll encounter default to 2&ndash;4 message-passing layers and only reach for these tricks when a task genuinely needs longer-range dependencies than a shallow model's receptive field can cover. A common complementary move is to add ordinary (non-message-passing) MLP layers before or after the GNN stack &mdash; more capacity, without more smoothing.</p>
+
+<h2>Check your understanding</h2>
+
+<div class="quiz">
+  <p class="quiz-question">1. As a GCN is stacked to many layers, repeated neighbor-averaging acts like which image-processing operation applied over and over?</p>
+  <ul class="quiz-options">
+    <li data-correct="true">Repeated Gaussian blurring</li>
+    <li data-correct="false">Repeated edge detection</li>
+    <li data-correct="false">Repeated contrast sharpening</li>
+    <li data-correct="false">Repeated color inversion</li>
+  </ul>
+  <div class="quiz-explanation">Li, Han &amp; Wu (2018) show that graph convolution is a form of Laplacian smoothing. Applying it repeatedly acts like a low-pass filter that blurs away the high-frequency signal distinguishing neighboring nodes &mdash; the graph analogue of repeated Gaussian blurring on an image.</div>
+</div>
+
+<div class="quiz">
+  <p class="quiz-question">2. Which symptom is the hallmark of over-smoothing in a deep GNN?</p>
+  <ul class="quiz-options">
+    <li data-correct="true">Node embeddings become nearly identical</li>
+    <li data-correct="false">Node embeddings become extremely sparse</li>
+    <li data-correct="false">Node embeddings gain extra dimensions</li>
+    <li data-correct="false">Node embeddings lose their gradients</li>
+  </ul>
+  <div class="quiz-explanation">Over-smoothing is representational collapse: repeated neighbor-averaging drives node embeddings toward a shared fixed point, so nodes that started out distinguishable become nearly identical, wrecking any classifier trying to tell them apart.</div>
+</div>
+
+<div class="quiz">
+  <p class="quiz-question">3. Which technique specifically adds a connection back to a node's earlier-layer (or initial) representation to counter over-smoothing?</p>
+  <ul class="quiz-options">
+    <li data-correct="true">Residual or skip connections</li>
+    <li data-correct="false">Larger learning rate schedules</li>
+    <li data-correct="false">Wider hidden layer dimensions</li>
+    <li data-correct="false">Additional dropout on inputs</li>
+  </ul>
+  <div class="quiz-explanation">Residual/skip connections (e.g. GCNII's initial-residual design) re-inject an earlier-layer or original node representation at each layer, preventing the signal from being fully washed out by repeated smoothing &mdash; complementary to PairNorm (renormalizing embeddings) and DropEdge (randomly removing edges to slow smoothing).</div>
+</div>
+
+<h2>Primary source</h2>
+
+<div class="source-link">
+  Read: Qimai Li, Zhichao Han &amp; Xiao-Ming Wu, <a href="https://arxiv.org/abs/1801.07606" target="_blank">"Deeper Insights into Graph Convolutional Networks for Semi-Supervised Learning"</a> (AAAI 2018, arXiv:1801.07606) &mdash; the paper that formalized graph convolution as Laplacian smoothing and named the over-smoothing problem. For the applied framing and empirical depth-vs-accuracy curves, see Stanford <a href="https://cs224w.stanford.edu/" target="_blank">CS224W</a>, Lecture 6 ("Theory of Graph Neural Networks" / expressive power and over-smoothing).
+</div>
+
+<div class="followup">
+  Questions about anything in this lesson? Ask your teacher &mdash; run <code>/teach</code> and ask about whatever is unclear. Next up: <strong>Lesson 7 &mdash; GCN: Spectral Roots, Spatial Practice</strong>, where we finally derive the specific (MSG, AGG, UPD) triple that defines the original GCN, and see where its self-loops and degree-normalization actually come from.
+</div>
+
+<div class="nav-links">
+  <a href="0005-stacking-layers-and-receptive-field.html">&larr; Lesson 5: Stacking Layers</a>
+  <a href="0007-gcn-spectral-roots-spatial-practice.html">Lesson 7: GCN: Spectral Roots, Spatial Practice &rarr;</a>
+</div>
+
+</body>
+</html>

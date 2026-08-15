@@ -1,0 +1,150 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Lesson 23: LLMs + GNNs</title>
+  <link rel="stylesheet" href="../assets/style.css">
+  <script src="../assets/quiz.js"></script>
+</head>
+<body>
+
+<div class="lesson-number">Lesson 23 &middot; Module 7: Frontiers (Optional) &middot; Final Lesson</div>
+<h1>LLMs + GNNs</h1>
+
+<p>This is a fast-moving area with no single foundational paper the way GCN or GAT have one &mdash; what follows is a synthesis across several distinct research threads, current as of writing, rather than one canonical result. Treat this lesson as a map of vocabulary and framings for reading further, not a settled textbook chapter.</p>
+
+<p>The pairing makes sense once you name the asymmetry: LLMs are extremely good at open-ended reasoning over text but have no native notion of graph structure; GNNs are good at structure but only consume whatever features you hand them. Most current work combines them along one of a few recurring patterns.</p>
+
+<h2>Pattern 1: serialize the graph as text, let the LLM reason directly</h2>
+
+<p>The simplest combination skips GNNs entirely: turn the graph into a text prompt (a node list, an edge list, or some structured description) and ask an LLM to answer questions about it &mdash; "is there a path from A to D?", "what's node X's degree?" &mdash; using its general reasoning ability.</p>
+
+<p>Google Research's <a href="https://arxiv.org/abs/2310.04560" target="_blank">"Talk like a Graph"</a> (Fatemi, Halcrow &amp; Perozzi, ICLR 2024) studied this directly and found that <strong>how</strong> you encode the graph as text matters enormously: switching encoding schemes swung LLM accuracy on graph reasoning tasks by anywhere from 4.8 to 61.8 percentage points on the same underlying task, and performance degraded further as graphs grew larger or tasks required deeper multi-hop structural reasoning.</p>
+
+<div class="key-idea">
+  <strong>Key idea:</strong> An LLM reasoning over a serialized graph has no architectural permutation invariance or message-passing inductive bias &mdash; recall from Lesson 1 that this was the whole reason GNNs exist. It's approximating structural reasoning through general-purpose text understanding, which works surprisingly well on small graphs and simple queries but is not a substitute for a GNN on tasks that need reliable multi-hop structure.
+</div>
+
+<h2>Pattern 2: LLMs feed better features into a GNN</h2>
+
+<p>A large share of real graphs are <strong>text-attributed</strong>: citation networks where nodes are papers with abstracts, product graphs where nodes are listings with descriptions, social graphs where nodes have bios. Traditionally these get embedded with something like TF-IDF or a small pretrained encoder to become the node feature matrix X from Lesson 2. A recent line of work instead uses an LLM to generate or enrich that text first &mdash; for instance, prompting an LLM to produce an explanation or expanded description for a node before embedding it &mdash; and only then hands the resulting features to an ordinary GNN for message passing.</p>
+
+<p>A recent survey (Li et al., <a href="https://arxiv.org/abs/2311.12399" target="_blank">"A Survey of Graph Meets Large Language Model," IJCAI 2024</a>) organizes this and related work into a three-way taxonomy worth knowing as vocabulary:</p>
+
+<ul>
+  <li><strong>LLM as Enhancer</strong> &mdash; the LLM improves node/edge features or representations that a GNN then consumes (the pattern just described).</li>
+  <li><strong>LLM as Predictor</strong> &mdash; the LLM itself makes the final prediction, given some serialization or summary of the graph (Pattern 1, pushed further).</li>
+  <li><strong>GNN&ndash;LLM Alignment</strong> &mdash; the two are trained jointly, with a shared or aligned representation space so structural and textual signals reinforce each other rather than one simply feeding the other.</li>
+</ul>
+
+<h2>Pattern 3: graphs as retrieval structure for grounded generation (GraphRAG)</h2>
+
+<p>Standard retrieval-augmented generation (RAG) retrieves text chunks by embedding similarity. <strong>GraphRAG</strong> (Microsoft Research) instead builds a knowledge graph from the source corpus first &mdash; extracting entities and relationships, then clustering the graph into communities and generating a summary for each community &mdash; and uses that graph structure to drive retrieval: local queries traverse nearby entities and relationships, while broad "what are the themes in this corpus" queries pull from the higher-level community summaries. This targets a known weakness of plain embedding-similarity RAG: answering questions that require connecting information scattered across many documents, which a flat similarity search tends to miss.</p>
+
+<div class="analogy">
+  <strong>Analogy:</strong> Plain RAG is like retrieving individual index cards that mention your query terms. GraphRAG is like retrieving index cards <em>plus</em> the folder structure connecting them, so the model can follow "these three entities co-occur across five documents" the way a GNN follows edges &mdash; except here the "graph" was extracted and summarized by an LLM in the first place, and the traversal is done for retrieval rather than for a differentiable forward pass.
+</div>
+
+<figure>
+  <svg viewBox="0 0 620 260" width="100%" xmlns="http://www.w3.org/2000/svg">
+    <!-- row 1: graph to text -->
+    <rect x="10" y="15" width="90" height="40" rx="6" fill="#d8f3dc" stroke="#2d6a4f" stroke-width="2"/>
+    <text x="55" y="40" text-anchor="middle" font-size="12" font-family="Georgia, serif">Graph</text>
+    <text x="118" y="40" text-anchor="middle" font-size="14" fill="#6c757d">&rarr;</text>
+    <rect x="136" y="15" width="110" height="40" rx="6" fill="#f8f9fa" stroke="#dee2e6" stroke-width="2"/>
+    <text x="191" y="40" text-anchor="middle" font-size="12" font-family="Georgia, serif">Text prompt</text>
+    <text x="264" y="40" text-anchor="middle" font-size="14" fill="#6c757d">&rarr;</text>
+    <rect x="282" y="15" width="80" height="40" rx="6" fill="#fff3cd" stroke="#ffc107" stroke-width="2"/>
+    <text x="322" y="40" text-anchor="middle" font-size="12" font-family="Georgia, serif">LLM</text>
+    <text x="380" y="40" font-size="11" fill="#6c757d">Pattern 1: graph-to-text, LLM reasons</text>
+
+    <!-- row 2: LLM to GNN -->
+    <rect x="10" y="105" width="80" height="40" rx="6" fill="#fff3cd" stroke="#ffc107" stroke-width="2"/>
+    <text x="50" y="130" text-anchor="middle" font-size="12" font-family="Georgia, serif">LLM</text>
+    <text x="108" y="130" text-anchor="middle" font-size="14" fill="#6c757d">&rarr;</text>
+    <rect x="126" y="105" width="110" height="40" rx="6" fill="#f8f9fa" stroke="#dee2e6" stroke-width="2"/>
+    <text x="181" y="126" text-anchor="middle" font-size="11" font-family="Georgia, serif">Node text</text>
+    <text x="181" y="140" text-anchor="middle" font-size="11" font-family="Georgia, serif">features X</text>
+    <text x="254" y="130" text-anchor="middle" font-size="14" fill="#6c757d">&rarr;</text>
+    <rect x="272" y="105" width="80" height="40" rx="6" fill="#d8f3dc" stroke="#2d6a4f" stroke-width="2"/>
+    <text x="312" y="130" text-anchor="middle" font-size="12" font-family="Georgia, serif">GNN</text>
+    <text x="370" y="130" font-size="11" fill="#6c757d">Pattern 2: LLM as Enhancer</text>
+
+    <!-- row 3: GraphRAG -->
+    <rect x="10" y="195" width="80" height="40" rx="6" fill="#f8f9fa" stroke="#dee2e6" stroke-width="2"/>
+    <text x="50" y="220" text-anchor="middle" font-size="12" font-family="Georgia, serif">Corpus</text>
+    <text x="108" y="220" text-anchor="middle" font-size="14" fill="#6c757d">&rarr;</text>
+    <rect x="126" y="195" width="110" height="40" rx="6" fill="#d8f3dc" stroke="#2d6a4f" stroke-width="2"/>
+    <text x="181" y="216" text-anchor="middle" font-size="11" font-family="Georgia, serif">Knowledge</text>
+    <text x="181" y="230" text-anchor="middle" font-size="11" font-family="Georgia, serif">graph</text>
+    <text x="254" y="220" text-anchor="middle" font-size="14" fill="#6c757d">&rarr;</text>
+    <rect x="272" y="195" width="80" height="40" rx="6" fill="#fff3cd" stroke="#ffc107" stroke-width="2"/>
+    <text x="312" y="220" text-anchor="middle" font-size="12" font-family="Georgia, serif">LLM</text>
+    <text x="370" y="220" font-size="11" fill="#6c757d">Pattern 3: GraphRAG retrieval</text>
+  </svg>
+  <figcaption>Three recurring integration patterns. The arrow direction tells you who's providing structure and who's providing reasoning.</figcaption>
+</figure>
+
+<h2>What this doesn't replace</h2>
+
+<p>None of these patterns make Lessons 4&ndash;21 obsolete. Message passing is still the tool of choice when you need reliable, differentiable, permutation-equivariant structural computation over a graph you can actually put in a tensor &mdash; a transaction network for AML detection, a molecule, a citation graph you're training end-to-end. LLM integration is most useful at the edges: producing richer input features, answering open-ended questions about a graph in natural language, or grounding generation in a corpus's structure. The two are complementary tools, not competitors, and knowing when a plain GNN is the right, cheaper, more reliable answer is itself part of the literacy this module is trying to give you.</p>
+
+<h2>Check your understanding</h2>
+
+<div class="quiz">
+  <p class="quiz-question">1. In the "LLM as Enhancer" pattern, what role does the LLM play in a GNN pipeline?</p>
+  <ul class="quiz-options">
+    <li data-correct="true">It generates richer text-based node features</li>
+    <li data-correct="false">It replaces message passing with attention</li>
+    <li data-correct="false">It pools node embeddings into graphs</li>
+    <li data-correct="false">It samples negative edges for training</li>
+  </ul>
+  <div class="quiz-explanation">The LLM enriches or generates the text associated with nodes (e.g., in a citation or product graph), which is then embedded into the node feature matrix X. The GNN still does the structural work of message passing on top of those improved features.</div>
+</div>
+
+<div class="quiz">
+  <p class="quiz-question">2. According to "Talk like a Graph," what most affects an LLM's accuracy on graph reasoning tasks?</p>
+  <ul class="quiz-options">
+    <li data-correct="true">The chosen text encoding of the graph</li>
+    <li data-correct="false">The chosen programming language for the prompts</li>
+    <li data-correct="false">The chosen color scheme for the diagrams</li>
+    <li data-correct="false">The chosen font size in the prompts</li>
+  </ul>
+  <div class="quiz-explanation">The paper found accuracy swings of 4.8 to 61.8 percentage points purely from changing how the same graph was serialized into text, alongside effects from graph size and task type &mdash; the encoding choice is not a cosmetic detail.</div>
+</div>
+
+<div class="quiz">
+  <p class="quiz-question">3. What does GraphRAG add on top of standard vector-similarity RAG retrieval?</p>
+  <ul class="quiz-options">
+    <li data-correct="true">Graph-structured retrieval over extracted entity relationships</li>
+    <li data-correct="false">Image-based retrieval over extracted pixel patterns</li>
+    <li data-correct="false">Audio-based retrieval over extracted speech signals</li>
+    <li data-correct="false">Random retrieval over shuffled document chunks</li>
+  </ul>
+  <div class="quiz-explanation">GraphRAG builds a knowledge graph from the corpus, clusters it into communities, and summarizes each community, then retrieves along that graph structure instead of (or alongside) flat embedding similarity &mdash; helping answer questions whose answer is scattered across many documents.</div>
+</div>
+
+<h2>Primary source</h2>
+
+<div class="source-link">
+  Watch/read: Stanford CS224W's <a href="https://web.stanford.edu/class/cs224w/slides/18-LLMs+GNN.pdf" target="_blank">"GNNs &amp; LLMs"</a> lecture slides. For the specific claims in this lesson: Fatemi, Halcrow &amp; Perozzi, <a href="https://arxiv.org/abs/2310.04560" target="_blank">"Talk like a Graph: Encoding Graphs for Large Language Models"</a> (ICLR 2024); Li et al., <a href="https://arxiv.org/abs/2311.12399" target="_blank">"A Survey of Graph Meets Large Language Model: Progress and Future Directions"</a> (IJCAI 2024); and Microsoft Research's <a href="https://www.microsoft.com/en-us/research/blog/graphrag-unlocking-llm-discovery-on-narrative-private-data/" target="_blank">GraphRAG blog post</a>, with code at the <a href="https://github.com/microsoft/graphrag" target="_blank">microsoft/graphrag</a> repository.
+</div>
+
+<div class="followup">
+  Questions about anything in this lesson? Ask your teacher &mdash; run <code>/teach</code> and ask about whatever is unclear.
+</div>
+
+<div class="key-idea">
+  <strong>Course complete.</strong> Twenty-three lessons ago, Lesson 1 opened with "what if the data has neither grid nor sequence structure, but relational structure?" You can now trace a message-passing computation by hand; explain why permutation equivariance is the design constraint that makes GNNs work at all; compare GCN, GAT, GraphSAGE, and GIN by inductive bias, attention, and expressive power; place a new architecture on the WL-expressiveness hierarchy; and reason about heterogeneous, knowledge, and temporal graphs &mdash; including the AML/fraud-detection pipeline from Lesson 21. That's everything MISSION.md set out as success: you should be able to read a GNN paper, follow its architecture and training procedure, and judge when a GNN (versus an LLM, versus a shallow embedding) is the right tool.
+  <br><br>
+  What's genuinely next, in rough order of value: <strong>(1)</strong> if AML/fraud is where you'll apply this, go deeper than Lesson 21's survey level &mdash; follow the temporal-GNN papers (TGN, EvolveGCN) in RESOURCES.md into the fraud-detection literature that cites them. <strong>(2)</strong> Join a community from RESOURCES.md's Wisdom section (r/MachineLearning, the PyG discussion forum, Papers With Code) to keep pace with a field that moves as fast as this lesson's topic did. <strong>(3)</strong> Pick one paper &mdash; GCN, GAT, GraphSAGE, TGN, or something AML-specific &mdash; and read it start to finish without help. That's the real test of whether this course did its job.
+</div>
+
+<div class="nav-links">
+  <a href="0022-deep-generative-models-for-graphs.html">&larr; Lesson 22: Deep Generative Models for Graphs</a>
+  <span>Course complete &mdash; see SYLLABUS.md</span>
+</div>
+
+</body>
+</html>

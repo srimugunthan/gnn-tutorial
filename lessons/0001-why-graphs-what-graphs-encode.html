@@ -1,0 +1,165 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Lesson 1: Why Graphs? What Graphs Encode</title>
+  <link rel="stylesheet" href="../assets/style.css">
+  <script src="../assets/quiz.js"></script>
+</head>
+<body>
+
+<div class="lesson-number">Lesson 1</div>
+<h1>Why Graphs? What Graphs Encode</h1>
+
+<p>You already know how CNNs exploit the grid structure of images and RNNs exploit the sequential structure of text. GNNs are the answer to a natural question: <em>what if the data has neither grid nor sequence structure, but relational structure?</em></p>
+
+<h2>A graph is a triple</h2>
+
+<p>A graph <strong>G = (V, E, u)</strong> consists of:</p>
+<ul>
+  <li><strong>Nodes</strong> (vertices) V &mdash; the entities</li>
+  <li><strong>Edges</strong> E &sube; V &times; V &mdash; the relationships between entities</li>
+  <li><strong>Global attributes</strong> u &mdash; properties of the entire graph</li>
+</ul>
+
+<p>Each component carries a <strong>feature vector</strong>:</p>
+<ul>
+  <li>Node features: a matrix <strong>X &isin; &Ropf;<sup>|V| &times; d<sub>v</sub></sup></strong></li>
+  <li>Edge features: a matrix <strong>E &isin; &Ropf;<sup>|E| &times; d<sub>e</sub></sup></strong></li>
+  <li>Global features: a vector <strong>u &isin; &Ropf;<sup>d<sub>u</sub></sup></strong></li>
+</ul>
+
+<div class="key-idea">
+  <strong>Key idea:</strong> A graph encodes <em>what things are</em> (node/edge features) separately from <em>how they relate</em> (connectivity structure). This separation is what makes graphs powerful &mdash; the same GNN architecture works whether a molecule has 5 atoms or 50.
+</div>
+
+<h2>Data you already know, reframed as graphs</h2>
+
+<p>The insight is that grids and sequences are <em>special cases</em> of graphs:</p>
+
+<table style="width:100%; border-collapse:collapse; margin:1rem 0; font-size:0.9rem;">
+  <thead>
+    <tr style="border-bottom:2px solid var(--border); text-align:left;">
+      <th style="padding:0.5rem;">Data</th>
+      <th style="padding:0.5rem;">Nodes</th>
+      <th style="padding:0.5rem;">Edges</th>
+      <th style="padding:0.5rem;">Structure</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr style="border-bottom:1px solid var(--border);">
+      <td style="padding:0.5rem;">Image</td>
+      <td style="padding:0.5rem;">Pixels</td>
+      <td style="padding:0.5rem;">Adjacency (4 or 8 neighbors)</td>
+      <td style="padding:0.5rem;">Regular grid</td>
+    </tr>
+    <tr style="border-bottom:1px solid var(--border);">
+      <td style="padding:0.5rem;">Text</td>
+      <td style="padding:0.5rem;">Tokens</td>
+      <td style="padding:0.5rem;">Sequential links</td>
+      <td style="padding:0.5rem;">Chain</td>
+    </tr>
+    <tr style="border-bottom:1px solid var(--border);">
+      <td style="padding:0.5rem;">Molecule</td>
+      <td style="padding:0.5rem;">Atoms</td>
+      <td style="padding:0.5rem;">Bonds</td>
+      <td style="padding:0.5rem;">Irregular</td>
+    </tr>
+    <tr style="border-bottom:1px solid var(--border);">
+      <td style="padding:0.5rem;">Social network</td>
+      <td style="padding:0.5rem;">People</td>
+      <td style="padding:0.5rem;">Friendships</td>
+      <td style="padding:0.5rem;">Irregular, scale-free</td>
+    </tr>
+    <tr>
+      <td style="padding:0.5rem;">Citation network</td>
+      <td style="padding:0.5rem;">Papers</td>
+      <td style="padding:0.5rem;">Citations</td>
+      <td style="padding:0.5rem;">Directed, irregular</td>
+    </tr>
+  </tbody>
+</table>
+
+<div class="analogy">
+  <strong>Analogy:</strong> A CNN is a GNN on a grid graph with weight-sharing across the spatial kernel. An RNN is a GNN on a chain graph with weight-sharing across time steps. GNNs generalise both to <em>arbitrary</em> topologies.
+</div>
+
+<h2>Why not just flatten it?</h2>
+
+<p>You might ask: why not represent the adjacency matrix as a flat vector and feed it into an MLP? Three reasons:</p>
+
+<ol>
+  <li><strong>Variable size.</strong> Graphs vary in node count. An MLP needs a fixed input dimension. You'd need padding, which wastes parameters and doesn't generalise.</li>
+  <li><strong>Permutation sensitivity.</strong> The same graph can be represented by any reordering of its adjacency matrix. An MLP would treat each reordering as a different input. A GNN is <em>permutation invariant</em> (or equivariant) by design.</li>
+  <li><strong>No structural inductive bias.</strong> An MLP doesn't know that node 3 and node 7 are neighbors. A GNN's operations are <em>defined by</em> the connectivity, so it naturally respects the structure.</li>
+</ol>
+
+<div class="key-idea">
+  <strong>Key idea:</strong> The defining property of a GNN is <strong>permutation equivariance</strong> &mdash; reordering the nodes produces the same reordering in the output, rather than a completely different result. This is the graph analogue of translation equivariance in CNNs.
+</div>
+
+<h2>Three levels of prediction</h2>
+
+<p>GNNs can make predictions at three levels, each requiring a different output head:</p>
+
+<ol>
+  <li><strong>Node-level:</strong> classify each node (e.g., predict the role of a protein in a PPI network)</li>
+  <li><strong>Edge-level:</strong> predict a property per edge (e.g., does a link exist? what type of bond?)</li>
+  <li><strong>Graph-level:</strong> predict a property of the whole graph (e.g., is this molecule toxic?)</li>
+</ol>
+
+<p>The architecture stays mostly the same &mdash; only the final pooling/readout step changes. We'll cover this in detail in a later lesson.</p>
+
+<h2>Check your understanding</h2>
+
+<div class="quiz">
+  <p class="quiz-question">1. A social network where users have profile features and friendships have a "since" date. What carries the "since" date?</p>
+  <ul class="quiz-options">
+    <li data-correct="false">Node feature vector</li>
+    <li data-correct="true">Edge feature vector</li>
+    <li data-correct="false">Global feature vector</li>
+    <li data-correct="false">Adjacency matrix entry</li>
+  </ul>
+  <div class="quiz-explanation">The "since" date is a property of the <em>relationship</em> between two users, so it belongs to the edge feature vector. The adjacency matrix only stores connectivity (0 or 1), not rich attributes.</div>
+</div>
+
+<div class="quiz">
+  <p class="quiz-question">2. Why is permutation equivariance important for a GNN?</p>
+  <ul class="quiz-options">
+    <li data-correct="false">It reduces the parameter count of the model</li>
+    <li data-correct="false">It allows the model to handle directed edges</li>
+    <li data-correct="true">It ensures the output is independent of arbitrary node ordering</li>
+    <li data-correct="false">It enables the model to process variable-length sequences</li>
+  </ul>
+  <div class="quiz-explanation">Graphs have no canonical node ordering. Two isomorphic graphs should produce the same predictions regardless of how the nodes are indexed. Permutation equivariance guarantees this &mdash; reorder the input, and the output reorders consistently.</div>
+</div>
+
+<div class="quiz">
+  <p class="quiz-question">3. Predicting whether a molecule is soluble in water is an example of which prediction level?</p>
+  <ul class="quiz-options">
+    <li data-correct="false">Node-level prediction task</li>
+    <li data-correct="false">Edge-level prediction task</li>
+    <li data-correct="true">Graph-level prediction task</li>
+    <li data-correct="false">Subgraph-level prediction</li>
+  </ul>
+  <div class="quiz-explanation">Solubility is a property of the entire molecule, not of any single atom or bond. This requires graph-level prediction: pool all node representations into a single graph representation, then classify.</div>
+</div>
+
+<h2>Primary source</h2>
+
+<div class="source-link">
+  Read: <a href="https://distill.pub/2021/gnn-intro/" target="_blank">"A Gentle Introduction to Graph Neural Networks"</a> by Sanchez-Lengeling et al. (Distill, 2021). Focus on <strong>Sections 1&ndash;3</strong> (What is a graph? / Data as graphs / GNN predictions). The interactive diagrams make the node/edge/global distinction visceral.
+</div>
+
+<div class="followup">
+  Questions about anything in this lesson? Ask your teacher &mdash; run <code>/teach</code> and ask about whatever is unclear. Next up: <strong>Lesson 2 &mdash; Graph Representations in Practice</strong>, where we'll cover how graphs actually get stored as tensors for a neural network.
+</div>
+
+<div class="nav-links">
+  <span>&larr; Start</span>
+  <a href="0002-graph-representations-in-practice.html">Lesson 2: Graph Representations in Practice &rarr;</a>
+</div>
+
+</body>
+</html>

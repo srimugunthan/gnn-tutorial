@@ -1,0 +1,175 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Lesson 22: Deep Generative Models for Graphs</title>
+  <link rel="stylesheet" href="../assets/style.css">
+  <script src="../assets/quiz.js"></script>
+</head>
+<body>
+
+<div class="lesson-number">Lesson 22 &middot; Module 7: Frontiers (Optional)</div>
+<h1>Deep Generative Models for Graphs</h1>
+
+<p>Every lesson so far has asked a GNN to <em>consume</em> a graph and produce a prediction. This lesson flips the question: can a model <em>produce</em> a graph? Given a dataset of molecules, can we train something that generates new, plausible molecules? This is a genuinely different problem from message passing, and it's worth seeing why &mdash; briefly, since this module is optional broader literacy rather than core material.</p>
+
+<h2>Why graph generation is harder than image or text generation</h2>
+
+<p>A VAE for images outputs a fixed-size pixel grid; an autoregressive language model outputs one token at a time in a fixed left-to-right order. Graphs have neither property:</p>
+
+<ul>
+  <li><strong>No canonical ordering.</strong> The same graph can be written down as |V|! different adjacency matrices, one per node permutation (recall permutation invariance from Lesson 1). A generative model that scores a specific matrix has to somehow not penalize a correct graph just because it came out in a different node order.</li>
+  <li><strong>Discrete, structured output.</strong> Nodes and edges are discrete objects with hard constraints (an edge either exists or doesn't), unlike a continuous pixel intensity.</li>
+</ul>
+
+<p>Two influential approaches handle this permutation problem in opposite ways: GraphVAE generates the whole graph at once and pays a matching cost after the fact; GraphRNN generates the graph piece by piece and avoids most of the matching cost by imposing an ordering during training.</p>
+
+<h2>GraphVAE: generate all at once, then match</h2>
+
+<p>GraphVAE (Simonovsky &amp; Komodakis, 2018) follows the standard VAE recipe you already know: an encoder maps a graph to a latent vector, a decoder maps the latent vector back to a graph, and the model is trained to reconstruct its inputs through that bottleneck. The twist is entirely in what the decoder outputs and how reconstruction error is measured.</p>
+
+<p>The decoder outputs a <strong>probabilistic, fully-connected graph of a fixed maximum size</strong> in one shot: an existence probability for every possible node, a predicted class for every node, and an existence probability plus edge type for every possible node pair &mdash; essentially a soft adjacency matrix and a soft feature matrix, produced directly by an MLP, with no message passing involved in decoding.</p>
+
+<div class="key-idea">
+  <strong>Key idea:</strong> Because the decoder has no idea which of the |V|! orderings of the target graph to aim for, GraphVAE can't just compare its output matrix to the target matrix entry-by-entry. It first solves an approximate <strong>graph-matching</strong> problem &mdash; searching for the permutation of the output graph's nodes that best aligns it to the target graph &mdash; and only then computes reconstruction loss against that best-aligned version.
+</div>
+
+<p>That matching step is expensive: the graph-matching subroutine GraphVAE uses is an approximate relaxation, but still costs on the order of O(n<sup>4</sup>) for an n-node graph, and the O(n<sup>2</sup>) all-pairs output itself doesn't scale. In practice, GraphVAE is demonstrated on small graphs &mdash; tens of nodes, not thousands. It's an elegant proof of concept for how to handle permutation invariance in a generative loss, more than a production-scale generator.</p>
+
+<h2>GraphRNN: generate one piece at a time</h2>
+
+<p>GraphRNN (You, Ying, Ren, Hamilton &amp; Leskovec, 2018) sidesteps the all-pairs output entirely by treating graph generation as <strong>sequence generation</strong>: add one node, decide its edges to existing nodes, add the next node, repeat, until a stop token is emitted.</p>
+
+<figure>
+  <svg viewBox="0 0 640 150" width="100%" xmlns="http://www.w3.org/2000/svg">
+    <!-- step 1 -->
+    <circle cx="50" cy="80" r="14" fill="#d8f3dc" stroke="#2d6a4f" stroke-width="2"/>
+    <text x="50" y="85" text-anchor="middle" font-size="12" font-family="Georgia, serif">A</text>
+    <text x="50" y="130" text-anchor="middle" font-size="11" fill="#6c757d">step 1</text>
+    <text x="120" y="85" text-anchor="middle" font-size="16" fill="#6c757d">&rarr;</text>
+    <!-- step 2 -->
+    <circle cx="190" cy="50" r="14" fill="#d8f3dc" stroke="#2d6a4f" stroke-width="2"/>
+    <text x="190" y="55" text-anchor="middle" font-size="12" font-family="Georgia, serif">A</text>
+    <circle cx="190" cy="110" r="14" fill="#fff3cd" stroke="#ffc107" stroke-width="2"/>
+    <text x="190" y="115" text-anchor="middle" font-size="12" font-family="Georgia, serif">B</text>
+    <line x1="190" y1="64" x2="190" y2="96" stroke="#1a1a2e" stroke-width="2"/>
+    <text x="190" y="140" text-anchor="middle" font-size="11" fill="#6c757d">step 2: add B, edge to A</text>
+    <text x="270" y="85" text-anchor="middle" font-size="16" fill="#6c757d">&rarr;</text>
+    <!-- step 3 -->
+    <circle cx="350" cy="40" r="14" fill="#d8f3dc" stroke="#2d6a4f" stroke-width="2"/>
+    <text x="350" y="45" text-anchor="middle" font-size="12" font-family="Georgia, serif">A</text>
+    <circle cx="350" cy="90" r="14" fill="#d8f3dc" stroke="#2d6a4f" stroke-width="2"/>
+    <text x="350" y="95" text-anchor="middle" font-size="12" font-family="Georgia, serif">B</text>
+    <circle cx="400" cy="120" r="14" fill="#fff3cd" stroke="#ffc107" stroke-width="2"/>
+    <text x="400" y="125" text-anchor="middle" font-size="12" font-family="Georgia, serif">C</text>
+    <line x1="350" y1="54" x2="350" y2="76" stroke="#1a1a2e" stroke-width="2"/>
+    <line x1="358" y1="100" x2="392" y2="115" stroke="#1a1a2e" stroke-width="2"/>
+    <text x="375" y="145" text-anchor="middle" font-size="11" fill="#6c757d">step 3: add C, edge to B only</text>
+    <text x="470" y="85" text-anchor="middle" font-size="16" fill="#6c757d">&rarr;</text>
+    <!-- step 4 -->
+    <circle cx="540" cy="30" r="14" fill="#d8f3dc" stroke="#2d6a4f" stroke-width="2"/>
+    <text x="540" y="35" text-anchor="middle" font-size="12" font-family="Georgia, serif">A</text>
+    <circle cx="540" cy="75" r="14" fill="#d8f3dc" stroke="#2d6a4f" stroke-width="2"/>
+    <text x="540" y="80" text-anchor="middle" font-size="12" font-family="Georgia, serif">B</text>
+    <circle cx="590" cy="100" r="14" fill="#d8f3dc" stroke="#2d6a4f" stroke-width="2"/>
+    <text x="590" y="105" text-anchor="middle" font-size="12" font-family="Georgia, serif">C</text>
+    <circle cx="610" cy="140" r="14" fill="#fff3cd" stroke="#ffc107" stroke-width="2"/>
+    <text x="610" y="145" text-anchor="middle" font-size="12" font-family="Georgia, serif">D</text>
+    <line x1="540" y1="44" x2="540" y2="61" stroke="#1a1a2e" stroke-width="2"/>
+    <line x1="549" y1="83" x2="581" y2="97" stroke="#1a1a2e" stroke-width="2"/>
+    <line x1="598" y1="112" x2="602" y2="128" stroke="#1a1a2e" stroke-width="2"/>
+    <text x="575" y="145" text-anchor="middle" font-size="0" fill="#6c757d"></text>
+  </svg>
+  <figcaption>GraphRNN generation: at each step, the graph-level RNN adds a node, then the edge-level RNN decides &mdash; one Bernoulli draw at a time &mdash; whether an edge exists to each recent node, before the next node is added.</figcaption>
+</figure>
+
+<p>Two RNNs work together: a <strong>graph-level RNN</strong> tracks the state of the graph built so far and initializes the state for each new node; a <strong>edge-level RNN</strong> then steps through the existing nodes and predicts, one Bernoulli (edge / no-edge) decision at a time, whether the new node connects to each of them. Training uses teacher forcing against real graphs with a binary cross-entropy loss, and generation at inference time samples from those Bernoulli outputs until an end-of-sequence signal is produced.</p>
+
+<div class="key-idea">
+  <strong>Key idea:</strong> The remaining problem is that a graph still has no single canonical node order to train the RNN on. GraphRNN's fix is to always linearize training graphs with a <strong>breadth-first search (BFS) ordering</strong>. This collapses the astronomically many equivalent orderings down to a much smaller set of BFS-consistent ones, and &mdash; because BFS visits nodes in shells &mdash; it also guarantees a new node can only connect to a bounded window of <em>recent</em> nodes, not the entire graph seen so far. That's what keeps each edge-level decision cheap and lets GraphRNN scale to graphs far larger than GraphVAE can handle.
+</div>
+
+<h2>GraphVAE vs. GraphRNN, side by side</h2>
+
+<table style="width:100%; border-collapse:collapse; margin:1rem 0; font-size:0.9rem;">
+  <thead>
+    <tr style="border-bottom:2px solid var(--border); text-align:left;">
+      <th style="padding:0.5rem;"></th>
+      <th style="padding:0.5rem;">GraphVAE</th>
+      <th style="padding:0.5rem;">GraphRNN</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr style="border-bottom:1px solid var(--border);">
+      <td style="padding:0.5rem;">Generation style</td>
+      <td style="padding:0.5rem;">One-shot (whole adjacency matrix)</td>
+      <td style="padding:0.5rem;">Sequential (autoregressive, node by node)</td>
+    </tr>
+    <tr style="border-bottom:1px solid var(--border);">
+      <td style="padding:0.5rem;">Handles permutation via</td>
+      <td style="padding:0.5rem;">Graph matching at loss time</td>
+      <td style="padding:0.5rem;">Fixed BFS ordering during training</td>
+    </tr>
+    <tr>
+      <td style="padding:0.5rem;">Practical scale</td>
+      <td style="padding:0.5rem;">Small graphs (tens of nodes)</td>
+      <td style="padding:0.5rem;">Much larger graphs</td>
+    </tr>
+  </tbody>
+</table>
+
+<p>Both papers predate the current wave of diffusion- and flow-based graph generators, which is where most active generative-graph research has since moved &mdash; but GraphVAE and GraphRNN are still the cleanest illustration of the core problem: <em>any</em> graph generator has to decide how it will cope with the fact that a graph has no canonical ordering, and every later method inherits that same choice in one form or another.</p>
+
+<h2>Check your understanding</h2>
+
+<div class="quiz">
+  <p class="quiz-question">1. Why does GraphVAE need a graph-matching step before computing its reconstruction loss?</p>
+  <ul class="quiz-options">
+    <li data-correct="false">To reduce total parameter count</li>
+    <li data-correct="true">To align arbitrary node orderings</li>
+    <li data-correct="false">To increase generated graph diversity</li>
+    <li data-correct="false">To speed up decoder training</li>
+  </ul>
+  <div class="quiz-explanation">The decoder's output matrix and the target graph's matrix may represent the same graph under two different node orderings. Graph matching searches for the permutation that best aligns them so the reconstruction loss compares like with like, rather than penalizing a correct graph for an arbitrary relabeling.</div>
+</div>
+
+<div class="quiz">
+  <p class="quiz-question">2. GraphRNN orders nodes via breadth-first search before training. What does this primarily achieve?</p>
+  <ul class="quiz-options">
+    <li data-correct="true">It caps the number of prior nodes considered</li>
+    <li data-correct="false">It removes the need for an edge-level RNN</li>
+    <li data-correct="false">It converts the graph into a dense matrix</li>
+    <li data-correct="false">It guarantees every newly generated graph is connected</li>
+  </ul>
+  <div class="quiz-explanation">BFS ordering collapses the many equivalent node orderings into a smaller, consistent set, and because BFS visits nodes in shells, a new node's edge decisions only need to look back at a bounded recent window rather than every node generated so far.</div>
+</div>
+
+<div class="quiz">
+  <p class="quiz-question">3. A researcher needs to generate graphs with thousands of nodes and wants training to stay tractable. Which approach fits better, and why?</p>
+  <ul class="quiz-options">
+    <li data-correct="true">GraphRNN, since generation and loss scale near-linearly</li>
+    <li data-correct="false">GraphVAE, since matching cost stays constant always</li>
+    <li data-correct="false">GraphRNN, since it avoids using neural networks</li>
+    <li data-correct="false">GraphVAE, since dense matrices compress large graphs</li>
+  </ul>
+  <div class="quiz-explanation">GraphVAE's O(n&sup2;) all-pairs output and roughly O(n&#8308;) matching cost make it impractical past small graphs. GraphRNN's sequential generation with a bounded BFS window avoids both bottlenecks, which is why it was demonstrated on graphs an order of magnitude larger.</div>
+</div>
+
+<h2>Primary source</h2>
+
+<div class="source-link">
+  Read: William L. Hamilton, <a href="https://www.cs.mcgill.ca/~wlh/grl_book/" target="_blank">"Graph Representation Learning"</a>, <strong>Chapters 8&ndash;9</strong>, for the systematic treatment of generative graph models. For the original papers: <a href="https://arxiv.org/abs/1802.03480" target="_blank">Simonovsky &amp; Komodakis, "GraphVAE: Towards Generation of Small Graphs Using Variational Autoencoders" (2018)</a> and <a href="https://arxiv.org/abs/1802.08773" target="_blank">You et al., "GraphRNN: Generating Realistic Graphs with Deep Auto-regressive Models" (2018)</a>. For lecture-style coverage, see Stanford CS224W's <a href="http://snap.stanford.edu/class/cs224w-2024/slides/16-deep-generation.pdf" target="_blank">"Deep Generative Models for Graphs"</a> slides.
+</div>
+
+<div class="followup">
+  Questions about anything in this lesson? Ask your teacher &mdash; run <code>/teach</code> and ask about whatever is unclear. Next up: <strong>Lesson 23 &mdash; LLMs + GNNs</strong>, the final lesson of the course, on how language models and graph models are being combined.
+</div>
+
+<div class="nav-links">
+  <a href="0021-gnns-for-fraud-and-aml-detection.html">&larr; Lesson 21: GNNs for Fraud and AML Detection</a>
+  <a href="0023-llms-and-gnns.html">Lesson 23: LLMs + GNNs &rarr;</a>
+</div>
+
+</body>
+</html>

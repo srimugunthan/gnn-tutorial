@@ -1,0 +1,140 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Lesson 21: GNNs for Fraud and AML Detection</title>
+  <link rel="stylesheet" href="../assets/style.css">
+  <script src="../assets/quiz.js"></script>
+</head>
+<body>
+
+<div class="lesson-number">Lesson 21</div>
+<h1>GNNs for Fraud and AML Detection</h1>
+
+<p>This is the lesson the last three have been building toward. Heterogeneous graphs (Lesson 18) gave you typed nodes and relations &mdash; accounts, merchants, devices; owns, transacts_with, logs_in_from. Knowledge graph embedding (Lesson 19) gave you the idea of scoring relationships directly. Temporal GNNs (Lesson 20) gave you the machinery for graphs that arrive as continuous event streams. Financial crime detection needs all three at once: a heterogeneous, continuously-evolving graph, scored under conditions no standard GNN benchmark prepares you for.</p>
+
+<h2>What makes fraud graphs different</h2>
+
+<p>Most of the architectures in this course were designed and benchmarked on citation networks, molecules, and social graphs &mdash; settings where classes are reasonably balanced, the graph is mostly static, and there's no adversary rewriting the data to evade the model. Fraud and AML graphs violate all three assumptions:</p>
+
+<ul>
+  <li><strong>Extreme class imbalance.</strong> Confirmed fraud or money-laundering activity is typically a tiny fraction of a percent of all transactions. A model that predicts "legitimate" for everything gets near-perfect accuracy and is completely useless. This forces specific handling &mdash; resampling, class-weighted or focal losses, or fraud-aware neighbor sampling &mdash; rather than the standard cross-entropy setup used elsewhere in this course.</li>
+  <li><strong>Adversarial, adaptive behavior.</strong> A molecule doesn't change its bonds to evade a toxicity classifier. A fraud ring does change its behavior once a detection pattern starts working against it. The data distribution isn't stationary the way it is in most GNN benchmarks &mdash; it actively shifts in response to the model, which is why one-time training on historical data quietly decays in production.</li>
+  <li><strong>Camouflage via legitimate-looking patterns.</strong> Fraudulent accounts deliberately transact with legitimate ones to blend in &mdash; a pattern sometimes called <em>relation camouflage</em>. This produces <strong>heterophily</strong>: a fraud node's immediate neighbors are disproportionately legitimate, which is the opposite of the assumption (similar nodes connect to similar nodes) that architectures like GCN implicitly lean on. It's a big part of why plain message-passing GNNs, applied naively, can underperform on fraud detection.</li>
+  <li><strong>Low-latency requirements.</strong> A molecular property predictor can take seconds; a payment-fraud model often needs to score a transaction before it settles &mdash; sub-second, in production. This rules out any approach that requires reprocessing the entire graph's history for every new event.</li>
+  <li><strong>Structure itself is signal.</strong> Individual transaction features (amount, currency, merchant category) are only part of the picture. The <em>shape</em> of the surrounding subgraph is often the strongest signal a layering scheme leaves behind.</li>
+</ul>
+
+<div class="key-idea">
+  <strong>Key idea:</strong> Fraud graphs aren't just "graphs with a harder label." Class imbalance, adversarial drift, heterophilic camouflage, and latency constraints each independently break an assumption that the standard GNN toolkit (Modules 1&ndash;5) was built around. Applying GNNs to AML well means knowing which assumption you're relaxing and why.
+</div>
+
+<h2>Structure as a first-class signal: fan-in, fan-out, cycles</h2>
+
+<p>Classic money-laundering typologies leave a topological fingerprint, independent of any single transaction's features:</p>
+
+<figure>
+  <svg viewBox="0 0 480 170" width="480" xmlns="http://www.w3.org/2000/svg">
+    <text x="30" y="18" font-size="11" font-weight="bold" fill="#1a1a2e" font-family="Georgia, serif">Fan-in (placement)</text>
+    <circle cx="30" cy="50" r="10" fill="#d0ebff" stroke="#1971c2" stroke-width="1.5"/>
+    <circle cx="30" cy="80" r="10" fill="#d0ebff" stroke="#1971c2" stroke-width="1.5"/>
+    <circle cx="30" cy="110" r="10" fill="#d0ebff" stroke="#1971c2" stroke-width="1.5"/>
+    <circle cx="85" cy="80" r="12" fill="#fff3cd" stroke="#e8a33d" stroke-width="2"/>
+    <line x1="40" y1="50" x2="76" y2="75" stroke="#1a1a2e" stroke-width="1.5"/>
+    <line x1="40" y1="80" x2="73" y2="80" stroke="#1a1a2e" stroke-width="1.5"/>
+    <line x1="40" y1="110" x2="76" y2="85" stroke="#1a1a2e" stroke-width="1.5"/>
+
+    <text x="180" y="18" font-size="11" font-weight="bold" fill="#1a1a2e" font-family="Georgia, serif">Fan-out (distribution)</text>
+    <circle cx="185" cy="80" r="12" fill="#fff3cd" stroke="#e8a33d" stroke-width="2"/>
+    <circle cx="240" cy="50" r="10" fill="#d0ebff" stroke="#1971c2" stroke-width="1.5"/>
+    <circle cx="240" cy="80" r="10" fill="#d0ebff" stroke="#1971c2" stroke-width="1.5"/>
+    <circle cx="240" cy="110" r="10" fill="#d0ebff" stroke="#1971c2" stroke-width="1.5"/>
+    <line x1="195" y1="75" x2="231" y2="50" stroke="#1a1a2e" stroke-width="1.5"/>
+    <line x1="197" y1="80" x2="230" y2="80" stroke="#1a1a2e" stroke-width="1.5"/>
+    <line x1="195" y1="85" x2="231" y2="110" stroke="#1a1a2e" stroke-width="1.5"/>
+
+    <text x="345" y="18" font-size="11" font-weight="bold" fill="#1a1a2e" font-family="Georgia, serif">Cycle (layering)</text>
+    <circle cx="400" cy="45" r="10" fill="#d8f3dc" stroke="#2d6a4f" stroke-width="1.5"/>
+    <circle cx="440" cy="80" r="10" fill="#d8f3dc" stroke="#2d6a4f" stroke-width="1.5"/>
+    <circle cx="400" cy="115" r="10" fill="#d8f3dc" stroke="#2d6a4f" stroke-width="1.5"/>
+    <circle cx="360" cy="80" r="10" fill="#d8f3dc" stroke="#2d6a4f" stroke-width="1.5"/>
+    <line x1="409" y1="50" x2="431" y2="75" stroke="#1a1a2e" stroke-width="1.5"/>
+    <line x1="435" y1="88" x2="409" y2="110" stroke="#1a1a2e" stroke-width="1.5"/>
+    <line x1="391" y1="112" x2="369" y2="87" stroke="#1a1a2e" stroke-width="1.5"/>
+    <line x1="365" y1="72" x2="391" y2="50" stroke="#1a1a2e" stroke-width="1.5"/>
+  </svg>
+  <figcaption>Fan-in (many small "smurfed" deposits converging on one account &mdash; placement), fan-out (one account rapidly distributing funds outward), and cycles (funds routed back toward their origin through intermediaries &mdash; classic layering). None of these are visible from any single transaction's features; they only exist at the subgraph level.</figcaption>
+</figure>
+
+<p>This is exactly the kind of pattern message passing over multiple hops is suited to surface &mdash; a 1-layer GNN sees only direct neighbors, but the receptive-field argument from the message-passing module means a deeper (or attention-based, longer-range) model can implicitly detect a several-hop cycle or an unusually dense fan-in, the way it detects any other multi-hop structural motif.</p>
+
+<h2>Mapping Lesson 20's patterns onto a detection pipeline</h2>
+
+<p>A realistic AML pipeline combines pieces from the last three lessons rather than picking just one:</p>
+
+<ul>
+  <li><strong>Graph schema:</strong> heterogeneous, as in Lesson 18 &mdash; accounts, merchants, devices, IP addresses as distinct node types, each transaction/ownership/login as a distinct typed edge. An R-GCN- or HGT-style encoder respects that a "shared device" edge means something structurally different from a "wire transfer" edge.</li>
+  <li><strong>Time framing:</strong> continuous-time, not snapshot &mdash; transactions post whenever they post. This is precisely the argument from Lesson 20 for reaching toward TGN-style architectures: a persistent per-account memory vector, updated incrementally as each new transaction arrives via a message function, avoids re-scanning an account's entire history every time a new transaction needs a real-time risk score.</li>
+  <li><strong>Latency:</strong> TGN's incremental memory update is what makes near-real-time scoring tractable at all &mdash; recomputing a full-history embedding (TGAT-style) for every single incoming transaction doesn't scale the same way when transactions arrive at high volume and a decision is needed before settlement.</li>
+  <li><strong>Class imbalance:</strong> handled at the training-data level (targeted negative/positive sampling around known fraud subgraphs, since fraud tends to cluster rather than scatter uniformly) and at the loss level (class-weighted or focal loss so the rare positive class isn't drowned out).</li>
+  <li><strong>Camouflage / heterophily:</strong> some fraud-specific GNN variants deliberately relax or reweight the neighbor-aggregation step (rather than trusting that "neighbor = similar"), specifically because fraud graphs violate the homophily assumption baked into architectures like plain GCN.</li>
+  <li><strong>Explainability:</strong> AML decisions frequently feed into regulatory filings (suspicious activity reports), which need a human-readable justification, not just a score. Attention weights from GAT/HAN/HGT-style layers, or the specific neighbor events a TGN's memory update leaned on, are a natural source of that justification &mdash; a materially different requirement than most benchmark GNN tasks ever impose.</li>
+</ul>
+
+<div class="analogy">
+  <strong>Analogy:</strong> Think of the pipeline as three questions stacked on top of each other, one per lesson: "what kinds of things and relationships exist here?" (Lesson 18's typed schema), "how do I score a specific relationship or fact?" (Lesson 19's scoring-function idea, echoed in edge-level fraud scores), and "how do I keep that score current as new events keep arriving?" (Lesson 20's continuous-time memory). Fraud detection needs an answer to all three simultaneously, which is why it's a late lesson in this course rather than an early one.
+</div>
+
+<h2>Check your understanding</h2>
+
+<div class="quiz">
+  <p class="quiz-question">1. What makes class imbalance especially severe in fraud/AML data compared to typical benchmark graph datasets?</p>
+  <ul class="quiz-options">
+    <li data-correct="true">Fraudulent transactions represent a tiny minority overall</li>
+    <li data-correct="false">Fraudulent transactions represent a large majority overall</li>
+    <li data-correct="false">Fraudulent transactions represent a random sample overall</li>
+    <li data-correct="false">Fraudulent transactions represent a balanced portion overall</li>
+  </ul>
+  <div class="quiz-explanation">Confirmed fraud or laundering activity is typically a tiny fraction of a percent of all transactions, so a model that predicts "legitimate" everywhere scores near-perfect accuracy while being useless &mdash; this forces resampling, reweighted losses, or fraud-aware sampling rather than standard cross-entropy training.</div>
+</div>
+
+<div class="quiz">
+  <p class="quiz-question">2. Why is graph structure itself treated as a signal in AML detection, beyond node and edge features?</p>
+  <ul class="quiz-options">
+    <li data-correct="true">Layering schemes create distinctive multi-hop transaction structural patterns</li>
+    <li data-correct="false">Layering schemes create distinctive multi-hop transaction feature vectors</li>
+    <li data-correct="false">Layering schemes create distinctive single-hop transaction structural patterns</li>
+    <li data-correct="false">Layering schemes create distinctive multi-hop merchant loyalty programs</li>
+  </ul>
+  <div class="quiz-explanation">Fan-in, fan-out, and cycle patterns (placement, distribution, layering) only exist at the subgraph level, across several hops &mdash; no single transaction's features reveal them. This is exactly the kind of multi-hop pattern deeper or attention-based message passing is suited to surface.</div>
+</div>
+
+<div class="quiz">
+  <p class="quiz-question">3. Why do continuous-time models like TGN suit AML transaction monitoring better than periodic batch retraining pipelines?</p>
+  <ul class="quiz-options">
+    <li data-correct="true">They can score new transactions before funds settle</li>
+    <li data-correct="false">They can score new transactions after funds settle</li>
+    <li data-correct="false">They can score old transactions before funds settle</li>
+    <li data-correct="false">They can score new merchants before funds settle</li>
+  </ul>
+  <div class="quiz-explanation">TGN's incremental per-node memory update lets a new transaction be scored right away, without rescanning an account's full history, which is what makes sub-second risk scoring before settlement tractable &mdash; a snapshot or periodic-retraining pipeline can't offer that.</div>
+</div>
+
+<h2>Primary source</h2>
+
+<div class="source-link">
+  Read: Cheng, Zou, Xiang &amp; Jiang, <a href="https://arxiv.org/abs/2411.05815" target="_blank">"Graph Neural Networks for Financial Fraud Detection: A Review"</a> (2024, published in <em>Frontiers of Computer Science</em>). It reviews over 100 studies and gives a unified framework for categorizing GNN approaches to financial fraud detection, including the class-imbalance and camouflage/heterophily issues covered above.
+</div>
+
+<div class="followup">
+  Questions about anything in this lesson? Ask your teacher &mdash; run <code>/teach</code> and ask about whatever is unclear. This closes Module 6 (Lessons 18&ndash;21) &mdash; the specialized, real-world-graph topics your AML/fraud background makes especially relevant. Next up: <strong>Lesson 22 &mdash; Deep Generative Models for Graphs</strong>, an optional-module shift toward generation rather than prediction.
+</div>
+
+<div class="nav-links">
+  <a href="0020-dynamic-and-temporal-gnns.html">&larr; Lesson 20: Dynamic and Temporal GNNs</a>
+  <a href="0022-deep-generative-models-for-graphs.html">Lesson 22: Deep Generative Models for Graphs &rarr;</a>
+</div>
+
+</body>
+</html>

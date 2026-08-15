@@ -1,0 +1,86 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Architecture Comparison Card</title>
+  <link rel="stylesheet" href="../assets/style.css">
+</head>
+<body>
+
+<div class="lesson-number">Reference</div>
+<h1>Architecture Comparison Card</h1>
+
+<p>Side-by-side comparison of the four architectures from Module 3 (Lessons 7&ndash;10). Read the row before the column: each row is one dimension of comparison across all four architectures, not a summary of one architecture alone.</p>
+
+<div style="overflow-x:auto;">
+<table style="width:100%; border-collapse:collapse; margin:1rem 0; font-size:0.85rem;">
+  <thead>
+    <tr style="border-bottom:2px solid var(--border); text-align:left;">
+      <th style="padding:0.5rem;">Dimension</th>
+      <th style="padding:0.5rem;">GCN</th>
+      <th style="padding:0.5rem;">GraphSAGE</th>
+      <th style="padding:0.5rem;">GAT</th>
+      <th style="padding:0.5rem;">GIN</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr style="border-bottom:1px solid var(--border);">
+      <td style="padding:0.5rem; font-weight:700;">Aggregation type</td>
+      <td style="padding:0.5rem;">Normalized weighted sum over 1-hop neighbors + self-loop</td>
+      <td style="padding:0.5rem;">Sampled neighbor aggregation (mean / LSTM / max-pool), concatenated with self</td>
+      <td style="padding:0.5rem;">Attention-weighted sum over 1-hop neighbors + self-loop, multi-head</td>
+      <td style="padding:0.5rem;">Sum over 1-hop neighbors + learnable self-weight, then MLP</td>
+    </tr>
+    <tr style="border-bottom:1px solid var(--border);">
+      <td style="padding:0.5rem; font-weight:700;">Neighbor weighting</td>
+      <td style="padding:0.5rem;">Fixed, structure-only: D&#771;<sup>&minus;1/2</sup>&Atilde;D&#771;<sup>&minus;1/2</sup></td>
+      <td style="padding:0.5rem;">Fixed/uniform among a sampled subset (mean), or MLP+max-pool per neighbor</td>
+      <td style="padding:0.5rem;">Learned, content-dependent: softmax over LeakyReLU attention scores</td>
+      <td style="padding:0.5rem;">Uniform (unweighted sum); expressive power comes from injectivity, not per-neighbor weighting</td>
+    </tr>
+    <tr style="border-bottom:1px solid var(--border);">
+      <td style="padding:0.5rem; font-weight:700;">Transductive vs. inductive</td>
+      <td style="padding:0.5rem;">Transductive by default &mdash; propagation rule is tied to one fixed graph's D&#771; and &Atilde;</td>
+      <td style="padding:0.5rem;">Inductive by design &mdash; learns aggregator functions, not per-node embeddings</td>
+      <td style="padding:0.5rem;">Works in both settings; validated on transductive citation nets and the inductive PPI benchmark</td>
+      <td style="padding:0.5rem;">Inductive by construction; typically applied to graph-level tasks where every graph is unseen at test time</td>
+    </tr>
+    <tr style="border-bottom:1px solid var(--border);">
+      <td style="padding:0.5rem; font-weight:700;">Expressiveness</td>
+      <td style="padding:0.5rem;">Below WL &mdash; degree-weighted sum is not injective over neighbor multisets</td>
+      <td style="padding:0.5rem;">Below WL for mean/max variants &mdash; both provably lose count/distribution information</td>
+      <td style="padding:0.5rem;">Below WL in the worst case &mdash; attention-weighted sum is not proven injective</td>
+      <td style="padding:0.5rem;"><strong>WL-equivalent</strong> &mdash; provably the most expressive standard message-passing GNN (Xu et al., 2019)</td>
+    </tr>
+    <tr style="border-bottom:1px solid var(--border);">
+      <td style="padding:0.5rem; font-weight:700;">Typical use case</td>
+      <td style="padding:0.5rem;">Node classification on a single, mostly-static graph (e.g. citation networks)</td>
+      <td style="padding:0.5rem;">Large-scale or growing graphs; settings needing to embed new nodes without retraining</td>
+      <td style="padding:0.5rem;">Tasks where neighbor relevance varies sharply, or edge-level interpretability is wanted</td>
+      <td style="padding:0.5rem;">Graph classification needing fine-grained structural discrimination (e.g. molecules)</td>
+    </tr>
+    <tr>
+      <td style="padding:0.5rem; font-weight:700;">Key limitation</td>
+      <td style="padding:0.5rem;">No native path for unseen nodes; ignores neighbor content; over-smooths with depth</td>
+      <td style="padding:0.5rem;">Sampling adds variance; mean/pool aggregators still don't differentiate neighbor content</td>
+      <td style="padding:0.5rem;">More compute per layer (attention over every edge); not guaranteed to beat GCN's expressiveness ceiling</td>
+      <td style="padding:0.5rem;">Still bounded by the WL test; sum aggregation is sensitive to neighbor-count scale</td>
+    </tr>
+  </tbody>
+</table>
+</div>
+
+<div class="key-idea">
+  <strong>Key idea:</strong> Read this table by row, not just by column. Each row is a genuinely different design axis (weighting mechanism, generalization, theoretical power) &mdash; an architecture that scores well on one axis doesn't automatically score well on another. GAT's learned attention doesn't buy WL-level expressiveness; GIN's WL-level expressiveness doesn't come from smarter weighting at all.
+</div>
+
+<p>See <a href="../lessons/0011-architecture-comparison.html">Lesson 11</a> for the decision framework this table supports.</p>
+
+<div class="nav-links">
+  <a href="../lessons/0011-architecture-comparison.html">&larr; Lesson 11: Architecture Comparison</a>
+  <a href="../lessons/0012-readout-and-pooling.html">Lesson 12: Readout and Pooling &rarr;</a>
+</div>
+
+</body>
+</html>

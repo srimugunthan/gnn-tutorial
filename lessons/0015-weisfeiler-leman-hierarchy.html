@@ -1,0 +1,175 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Lesson 15: The Weisfeiler-Leman Hierarchy</title>
+  <link rel="stylesheet" href="../assets/style.css">
+  <script src="../assets/quiz.js"></script>
+</head>
+<body>
+
+<div class="lesson-number">Lesson 15</div>
+<h1>The Weisfeiler-Leman Hierarchy</h1>
+
+<p>Back in Lesson 10, GIN was motivated by a claim: it's as powerful as the Weisfeiler-Leman (WL) test at telling graphs apart. We took that on faith to get to the architecture. This lesson cashes out the claim &mdash; what the WL test actually is, why message passing turns out to be doing the same computation, and what "as powerful as 1-WL" implies about the hard ceiling on <em>any</em> standard GNN's ability to distinguish graphs, no matter how it's trained or how many layers it has.</p>
+
+<h2>Expressiveness is about telling graphs apart</h2>
+
+<p>A GNN is, structurally, a function that maps a graph to a set of embeddings. Call two graphs <strong>indistinguishable</strong> by a GNN if it maps them (or corresponding nodes in them) to identical embeddings, for every possible choice of weights. "Expressiveness" is a question about the function class: which pairs of non-isomorphic graphs <em>can</em> some GNN in this class map to different embeddings, and which pairs can no GNN in the class ever separate, regardless of training?</p>
+
+<p>This is a statement about representational capacity, not about what a specific trained model happens to learn &mdash; the same flavor of question as "can an MLP with ReLUs represent XOR," just for graph-structured inputs.</p>
+
+<div class="key-idea">
+  <strong>Key idea:</strong> Expressiveness ceilings are architecture properties, not training artifacts. If two non-isomorphic graphs are indistinguishable to the GNN's function class, no amount of data or optimization will ever separate them &mdash; the information was destroyed by the architecture itself.
+</div>
+
+<h2>The 1-WL color-refinement algorithm</h2>
+
+<p>The Weisfeiler-Leman test (1-dimensional version, also called <strong>color refinement</strong>) is a classical, cheap heuristic for graph isomorphism. In outline:</p>
+
+<ol>
+  <li><strong>Initialize</strong> every node's "color" from its label or degree.</li>
+  <li><strong>Refine:</strong> repeatedly recolor each node by hashing its current color together with the <em>multiset</em> of its neighbors' colors.</li>
+  <li><strong>Stop</strong> when the coloring stops changing (the partition is stable).</li>
+  <li><strong>Compare:</strong> two graphs are declared possibly-isomorphic if their final color histograms match; if the histograms differ, the graphs are <em>definitely</em> non-isomorphic.</li>
+</ol>
+
+<p>The full step-by-step mechanics, with two worked examples, live in the <a href="../reference/wl-test-reference.html">WL Test Reference</a> &mdash; read it alongside this lesson if the algorithm above feels abstract.</p>
+
+<h2>Message passing is color refinement, learned</h2>
+
+<p>Look again at the gather &rarr; aggregate &rarr; update loop from Lesson 4 and set it side by side with the steps above:</p>
+
+<table style="width:100%; border-collapse:collapse; margin:1rem 0; font-size:0.9rem;">
+  <thead>
+    <tr style="border-bottom:2px solid var(--border); text-align:left;">
+      <th style="padding:0.5rem;">1-WL color refinement</th>
+      <th style="padding:0.5rem;">Message-passing GNN</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr style="border-bottom:1px solid var(--border);">
+      <td style="padding:0.5rem;">Initial color from node label/degree</td>
+      <td style="padding:0.5rem;">Initial hidden state h<sub>v</sub><sup>(0)</sup> from node features</td>
+    </tr>
+    <tr style="border-bottom:1px solid var(--border);">
+      <td style="padding:0.5rem;">Gather multiset of neighbor colors</td>
+      <td style="padding:0.5rem;">Gather multiset of neighbor hidden states (AGGREGATE)</td>
+    </tr>
+    <tr style="border-bottom:1px solid var(--border);">
+      <td style="padding:0.5rem;">Hash(own color, neighbor multiset)</td>
+      <td style="padding:0.5rem;">Learned COMBINE/UPDATE function</td>
+    </tr>
+    <tr>
+      <td style="padding:0.5rem;">Compare final color histograms</td>
+      <td style="padding:0.5rem;">Pooled/readout graph embedding (Lesson 12)</td>
+    </tr>
+  </tbody>
+</table>
+
+<p>They're the same algorithm skeleton. The WL hash function is a fixed, injective (but otherwise arbitrary) recoloring rule; a GNN replaces it with a <em>learned</em> AGGREGATE + COMBINE. Xu et al. (2019) make this precise: for any message-passing GNN, if the GNN maps two graphs to different embeddings, then 1-WL also distinguishes them. In other words, <strong>a message-passing GNN's discriminative power is bounded above by 1-WL</strong> &mdash; no message-passing architecture, however deep or wide, can ever tell apart two graphs that 1-WL says are indistinguishable.</p>
+
+<div class="key-idea">
+  <strong>Key idea:</strong> 1-WL isn't just an analogy for message passing &mdash; it's an upper bound on what message passing can ever compute, provably, for the entire architecture family (GCN, GraphSAGE, GAT, GIN, and any future variant built on gather-aggregate-update).
+</div>
+
+<h2>GIN reaches the ceiling</h2>
+
+<p>The bound above says GNNs are <em>at most</em> as powerful as 1-WL. Whether a specific GNN actually <em>reaches</em> that ceiling depends on whether its AGGREGATE and COMBINE steps are injective over multisets of neighbor features &mdash; if two different neighbor multisets ever get squashed to the same aggregated value, the GNN has thrown away information 1-WL would have kept.</p>
+
+<p>This is exactly the design problem GIN (Lesson 10) solves. Xu et al. show that sum aggregation, followed by an MLP, can represent an injective function over any countable multiset domain &mdash; the "deep multisets" result. Mean and max aggregation cannot: mean conflates a neighbor multiset {1, 1} with {1} rescaled, and max conflates {1} with {1, 1, 1}, throwing away exactly the multiplicity information 1-WL's hash preserves. That's why GIN's <code>(1+&epsilon;)&middot;h<sub>v</sub> + &sum;<sub>u&isin;N(v)</sub> h<sub>u</sub></code> update, feeding into an MLP, is provably as powerful as 1-WL &mdash; it hits the ceiling that GCN, GraphSAGE, and GAT (with their mean/attention-weighted aggregations) provably fall short of.</p>
+
+<div class="analogy">
+  <strong>Analogy:</strong> This mirrors why sum-pooling outperforms average-pooling for graph-level readout when you need to preserve count information (Lesson 12) &mdash; the same injectivity argument shows up twice, once inside each layer's aggregation and once in the final readout.
+</div>
+
+<h2>What 1-WL still can't see</h2>
+
+<p>Because GIN caps out at 1-WL, GIN inherits 1-WL's blind spots. The classic failure: any two <strong>regular graphs</strong> (every node has the same degree) with the same size can look identical to 1-WL, even when they're structurally very different &mdash; a 6-node cycle and two disjoint triangles are the standard example, worked through in the reference doc. If your task depends on distinguishing structures like that (counting triangles, detecting specific substructures, some molecular property prediction tasks), no amount of GIN depth or width will help; the information is gone at the aggregation step, not lost to undertraining.</p>
+
+<h2>The k-WL hierarchy and higher-order GNNs</h2>
+
+<p>1-WL is the bottom rung of an infinite hierarchy. <strong>k-WL</strong> tests generalize color refinement to color <em>k-tuples</em> of nodes instead of single nodes, refining based on how each tuple's neighborhood of tuples looks. Each step up is strictly more powerful: 2-WL can separate some pairs 1-WL cannot (including the cycle-vs-triangles example above), 3-WL separates some pairs 2-WL cannot, and so on.</p>
+
+<p>Morris et al. (2019, "Weisfeiler and Leman Go Neural") build the neural analogue: <strong>k-GNNs</strong>, which pass messages between k-tuples of nodes rather than single nodes, and prove k-GNNs match k-WL's expressive power exactly &mdash; the same equivalence argument as GIN &harr; 1-WL, one level up.</p>
+
+<figure>
+  <svg viewBox="0 0 420 260" width="420" xmlns="http://www.w3.org/2000/svg">
+    <rect x="30" y="180" width="360" height="55" rx="6" fill="#d8f3dc" stroke="#2d6a4f" stroke-width="2"/>
+    <text x="210" y="203" text-anchor="middle" font-size="13" font-family="Georgia, serif" font-weight="bold">1-WL  &#8776;  message-passing GNNs</text>
+    <text x="210" y="221" text-anchor="middle" font-size="11" font-family="Georgia, serif" fill="#495057">GCN, GraphSAGE, GAT, GIN</text>
+
+    <rect x="30" y="105" width="360" height="55" rx="6" fill="#fff3cd" stroke="#e0a800" stroke-width="2"/>
+    <text x="210" y="128" text-anchor="middle" font-size="13" font-family="Georgia, serif" font-weight="bold">2-WL  &#8776;  2-GNNs</text>
+    <text x="210" y="146" text-anchor="middle" font-size="11" font-family="Georgia, serif" fill="#495057">messages between node pairs</text>
+
+    <rect x="30" y="30" width="360" height="55" rx="6" fill="#e8f4f8" stroke="#1971c2" stroke-width="2"/>
+    <text x="210" y="53" text-anchor="middle" font-size="13" font-family="Georgia, serif" font-weight="bold">3-WL  &#8776;  3-GNNs</text>
+    <text x="210" y="71" text-anchor="middle" font-size="11" font-family="Georgia, serif" fill="#495057">messages between node triples</text>
+
+    <line x1="15" y1="235" x2="15" y2="30" stroke="#1a1a2e" stroke-width="2" marker-end="url(#arrow)"/>
+    <defs>
+      <marker id="arrow" markerWidth="8" markerHeight="8" refX="4" refY="4" orient="auto">
+        <path d="M0,0 L8,4 L0,8 Z" fill="#1a1a2e"/>
+      </marker>
+    </defs>
+    <text x="8" y="20" font-size="10" font-family="Georgia, serif" fill="#495057">more expressive, more expensive: O(n<tspan baseline-shift="super" font-size="8">k</tspan>)</text>
+  </svg>
+  <figcaption>Each rung of the WL hierarchy has a matching GNN family with provably equal expressive power. Cost grows fast: k-GNNs scale roughly as O(n<sup>k</sup>), which is why almost every GNN used in practice sits on the bottom rung.</figcaption>
+</figure>
+
+<p>In practice, k-GNNs for k &ge; 3 are rarely used &mdash; the O(n<sup>k</sup>) tuple bookkeeping is prohibitive for anything but small graphs. Knowing the hierarchy exists is still valuable for reading papers: when a paper claims to "go beyond 1-WL," it's implicitly claiming to sit somewhere on this ladder (higher-order tuples, subgraph counting, or added structural features), and you can ask what it costs.</p>
+
+<h2>Check your understanding</h2>
+
+<div class="quiz">
+  <p class="quiz-question">1. According to Xu et al.'s theorem, a standard message-passing GNN's ability to distinguish non-isomorphic graphs is bounded above by which test?</p>
+  <ul class="quiz-options">
+    <li data-correct="true">The 1-WL test</li>
+    <li data-correct="false">The 2-WL test</li>
+    <li data-correct="false">The 3-WL test</li>
+    <li data-correct="false">The k-WL test</li>
+  </ul>
+  <div class="quiz-explanation">Xu et al. prove that any message-passing GNN can distinguish two graphs only if 1-WL also distinguishes them &mdash; 1-WL is the ceiling for the whole gather-aggregate-update architecture family, not the k-WL hierarchy in general.</div>
+</div>
+
+<div class="quiz">
+  <p class="quiz-question">2. Why does GIN use sum aggregation instead of mean or max over neighbor features?</p>
+  <ul class="quiz-options">
+    <li data-correct="true">It preserves injectivity over neighbor multisets</li>
+    <li data-correct="false">It preserves smoothness over neighbor multisets</li>
+    <li data-correct="false">It preserves symmetry over neighbor multisets</li>
+    <li data-correct="false">It preserves sparsity over neighbor multisets</li>
+  </ul>
+  <div class="quiz-explanation">Sum, followed by an MLP, can represent an injective function over any countable multiset of neighbor features. Mean and max both collapse multisets that differ only in multiplicity (e.g. {1,1} vs {1}), throwing away information 1-WL's hash would have kept &mdash; which is why they fall short of the 1-WL ceiling.</div>
+</div>
+
+<div class="quiz">
+  <p class="quiz-question">3. 1-WL fails to distinguish which classic pair of non-isomorphic graphs?</p>
+  <ul class="quiz-options">
+    <li data-correct="true">A hexagon and two triangles</li>
+    <li data-correct="false">A hexagon and one triangle</li>
+    <li data-correct="false">A pentagon and two triangles</li>
+    <li data-correct="false">A hexagon and two squares</li>
+  </ul>
+  <div class="quiz-explanation">A 6-node cycle and two disjoint triangles are both 2-regular graphs (every node has degree 2), so every node looks identical under color refinement and the final histograms match &mdash; even though the graphs are structurally very different. See the WL Test Reference for the full worked example.</div>
+</div>
+
+<h2>Primary source</h2>
+
+<div class="source-link">
+  Read: <a href="https://arxiv.org/abs/1810.00826" target="_blank">"How Powerful are Graph Neural Networks?"</a> by Xu et al. (2019) &mdash; the GIN paper, this time for its theoretical sections (the WL-bound theorem and the deep-multisets injectivity argument), not just the architecture. For the hierarchy above 1-WL, see <a href="https://arxiv.org/abs/1810.02244" target="_blank">"Weisfeiler and Leman Go Neural: Higher-order Graph Neural Networks"</a> by Morris et al. (2019). And for the algorithm mechanics themselves, the <a href="../reference/wl-test-reference.html">WL Test Reference</a> built alongside this lesson.
+</div>
+
+<div class="followup">
+  Questions about anything in this lesson? Ask your teacher &mdash; run <code>/teach</code> and ask about whatever is unclear. Next up: <strong>Lesson 16 &mdash; Geometric Deep Learning: The Symmetry Perspective</strong>, where the permutation-equivariance idea from Lesson 1 turns out to be one instance of a much bigger principle spanning CNNs, GNNs, and Transformers.
+</div>
+
+<div class="nav-links">
+  <a href="0014-node-embeddings-before-gnns.html">&larr; Lesson 14: Node Embeddings Before GNNs</a>
+  <a href="0016-geometric-deep-learning-symmetry.html">Lesson 16: Geometric Deep Learning &rarr;</a>
+</div>
+
+</body>
+</html>

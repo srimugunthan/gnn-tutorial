@@ -1,0 +1,128 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>WL Test Reference</title>
+  <link rel="stylesheet" href="../assets/style.css">
+</head>
+<body>
+
+<div class="lesson-number">Reference</div>
+<h1>WL Test Reference</h1>
+
+<p>The 1-dimensional Weisfeiler-Leman (1-WL) test, a.k.a. <strong>color refinement</strong>, step by step &mdash; with a worked example it solves and a worked example it can't. Companion to <a href="../lessons/0015-weisfeiler-leman-hierarchy.html">Lesson 15</a>.</p>
+
+<h2>The algorithm</h2>
+
+<ol>
+  <li><strong>Initialize.</strong> Give every node v a color c<sup>(0)</sup>(v). If nodes carry labels, start from those; otherwise start from degree.</li>
+  <li><strong>Refine.</strong> At each round t, recolor every node by hashing its current color together with the <em>multiset</em> of its neighbors' current colors:
+    <pre><code>c^(t+1)(v) = HASH( c^(t)(v),  {{ c^(t)(u) : u &isin; N(v) }} )</code></pre>
+    The double braces mean multiset &mdash; duplicates matter, order doesn't. HASH just needs to be injective (map different inputs to different outputs); its exact form doesn't matter for the test.
+  </li>
+  <li><strong>Stop.</strong> Repeat until the coloring stabilizes &mdash; no node's color changes in a round. This takes at most |V| &minus; 1 rounds.</li>
+  <li><strong>Compare.</strong> Run refinement on both graphs at once (so the same HASH assigns consistent colors across both). If the final color <em>histograms</em> (color &rarr; count) differ, the graphs are definitely non-isomorphic. If the histograms match, the test is inconclusive &mdash; the graphs might be isomorphic, or might not be; 1-WL simply can't tell.</li>
+</ol>
+
+<div class="key-idea">
+  <strong>Key idea:</strong> 1-WL never proves two graphs <em>are</em> isomorphic &mdash; it can only prove they're <em>not</em>, by finding a difference in the final histograms. A matching histogram is a "maybe," not a "yes."
+</div>
+
+<h2>Worked example: a pair 1-WL distinguishes</h2>
+
+<p>Two 5-node graphs with the <em>same degree sequence</em> {3, 2, 2, 2, 1} &mdash; so comparing initial degree histograms alone is inconclusive. Refinement is needed.</p>
+
+<figure>
+  <svg viewBox="0 0 460 190" width="460" xmlns="http://www.w3.org/2000/svg">
+    <text x="115" y="18" text-anchor="middle" font-size="12" font-family="Georgia, serif" font-weight="bold">Graph A: 4-cycle + pendant</text>
+    <line x1="65" y1="50" x2="165" y2="50" stroke="#1a1a2e" stroke-width="2"/>
+    <line x1="165" y1="50" x2="165" y2="130" stroke="#1a1a2e" stroke-width="2"/>
+    <line x1="165" y1="130" x2="65" y2="130" stroke="#1a1a2e" stroke-width="2"/>
+    <line x1="65" y1="130" x2="65" y2="50" stroke="#1a1a2e" stroke-width="2"/>
+    <line x1="65" y1="50" x2="20" y2="20" stroke="#1a1a2e" stroke-width="2"/>
+    <circle cx="65" cy="50" r="15" fill="#d8f3dc" stroke="#2d6a4f" stroke-width="2"/>
+    <text x="65" y="55" text-anchor="middle" font-size="12" font-family="Georgia, serif">1</text>
+    <circle cx="165" cy="50" r="15" fill="#d8f3dc" stroke="#2d6a4f" stroke-width="2"/>
+    <text x="165" y="55" text-anchor="middle" font-size="12" font-family="Georgia, serif">2</text>
+    <circle cx="165" cy="130" r="15" fill="#d8f3dc" stroke="#2d6a4f" stroke-width="2"/>
+    <text x="165" y="135" text-anchor="middle" font-size="12" font-family="Georgia, serif">3</text>
+    <circle cx="65" cy="130" r="15" fill="#d8f3dc" stroke="#2d6a4f" stroke-width="2"/>
+    <text x="65" y="135" text-anchor="middle" font-size="12" font-family="Georgia, serif">4</text>
+    <circle cx="20" cy="20" r="15" fill="#d8f3dc" stroke="#2d6a4f" stroke-width="2"/>
+    <text x="20" y="25" text-anchor="middle" font-size="12" font-family="Georgia, serif">5</text>
+
+    <text x="345" y="18" text-anchor="middle" font-size="12" font-family="Georgia, serif" font-weight="bold">Graph B: triangle + path(2)</text>
+    <line x1="330" y1="70" x2="390" y2="30" stroke="#1a1a2e" stroke-width="2"/>
+    <line x1="390" y1="30" x2="390" y2="100" stroke="#1a1a2e" stroke-width="2"/>
+    <line x1="390" y1="100" x2="330" y2="70" stroke="#1a1a2e" stroke-width="2"/>
+    <line x1="330" y1="70" x2="290" y2="110" stroke="#1a1a2e" stroke-width="2"/>
+    <line x1="290" y1="110" x2="290" y2="160" stroke="#1a1a2e" stroke-width="2"/>
+    <circle cx="330" cy="70" r="15" fill="#fff3cd" stroke="#e0a800" stroke-width="2"/>
+    <text x="330" y="75" text-anchor="middle" font-size="12" font-family="Georgia, serif">1&prime;</text>
+    <circle cx="390" cy="30" r="15" fill="#fff3cd" stroke="#e0a800" stroke-width="2"/>
+    <text x="390" y="35" text-anchor="middle" font-size="12" font-family="Georgia, serif">2&prime;</text>
+    <circle cx="390" cy="100" r="15" fill="#fff3cd" stroke="#e0a800" stroke-width="2"/>
+    <text x="390" y="105" text-anchor="middle" font-size="12" font-family="Georgia, serif">3&prime;</text>
+    <circle cx="290" cy="110" r="15" fill="#fff3cd" stroke="#e0a800" stroke-width="2"/>
+    <text x="290" y="115" text-anchor="middle" font-size="12" font-family="Georgia, serif">4&prime;</text>
+    <circle cx="290" cy="160" r="15" fill="#fff3cd" stroke="#e0a800" stroke-width="2"/>
+    <text x="290" y="165" text-anchor="middle" font-size="12" font-family="Georgia, serif">5&prime;</text>
+  </svg>
+  <figcaption>Graph A: 4-cycle (1-2-3-4-1) with a pendant node 5 on node 1. Graph B: triangle (1&prime;-2&prime;-3&prime;) with a length-2 pendant path (1&prime;-4&prime;-5&prime;). Same degree sequence, different structure.</figcaption>
+</figure>
+
+<p><strong>Round 0 (degree):</strong> both graphs give the histogram {3:1, 2:3, 1:1}. Identical &mdash; inconclusive so far.</p>
+
+<p><strong>Round 1</strong> recolors each node by hashing its degree with the multiset of its neighbors' degrees. Focus on the degree-3 hub in each graph:</p>
+
+<ul>
+  <li>Node 1 (Graph A) neighbors are 2 (deg 2), 4 (deg 2), 5 (deg 1) &rarr; neighbor multiset {2, 2, 1}</li>
+  <li>Node 1&prime; (Graph B) neighbors are 2&prime; (deg 2), 3&prime; (deg 2), 4&prime; (deg 2) &rarr; neighbor multiset {2, 2, 2}</li>
+</ul>
+
+<p>Different neighbor multisets &rarr; the hash gives node 1 and node 1&prime; different new colors. Working through the rest of the nodes the same way, the two degree-1 nodes also end up differently colored (node 5's only neighbor has degree 3; node 5&prime;'s only neighbor, 4&prime;, has degree 2). By round 1, the color histograms of A and B no longer match. <strong>1-WL correctly certifies A and B are non-isomorphic</strong> &mdash; which is visible directly too, since A contains a 4-cycle and B doesn't.</p>
+
+<h2>Worked example: a pair 1-WL can't distinguish</h2>
+
+<figure>
+  <svg viewBox="0 0 460 200" width="460" xmlns="http://www.w3.org/2000/svg">
+    <text x="115" y="18" text-anchor="middle" font-size="12" font-family="Georgia, serif" font-weight="bold">C6: a 6-cycle</text>
+    <polygon points="115,35 165,60 165,120 115,145 65,120 65,60" fill="none" stroke="#1a1a2e" stroke-width="2"/>
+    <circle cx="115" cy="35" r="13" fill="#d8f3dc" stroke="#2d6a4f" stroke-width="2"/>
+    <circle cx="165" cy="60" r="13" fill="#d8f3dc" stroke="#2d6a4f" stroke-width="2"/>
+    <circle cx="165" cy="120" r="13" fill="#d8f3dc" stroke="#2d6a4f" stroke-width="2"/>
+    <circle cx="115" cy="145" r="13" fill="#d8f3dc" stroke="#2d6a4f" stroke-width="2"/>
+    <circle cx="65" cy="120" r="13" fill="#d8f3dc" stroke="#2d6a4f" stroke-width="2"/>
+    <circle cx="65" cy="60" r="13" fill="#d8f3dc" stroke="#2d6a4f" stroke-width="2"/>
+
+    <text x="345" y="18" text-anchor="middle" font-size="12" font-family="Georgia, serif" font-weight="bold">2&times;C3: two triangles</text>
+    <polygon points="300,50 335,110 265,110" fill="none" stroke="#1a1a2e" stroke-width="2"/>
+    <circle cx="300" cy="50" r="13" fill="#fff3cd" stroke="#e0a800" stroke-width="2"/>
+    <circle cx="335" cy="110" r="13" fill="#fff3cd" stroke="#e0a800" stroke-width="2"/>
+    <circle cx="265" cy="110" r="13" fill="#fff3cd" stroke="#e0a800" stroke-width="2"/>
+    <polygon points="410,50 445,110 375,110" fill="none" stroke="#1a1a2e" stroke-width="2"/>
+    <circle cx="410" cy="50" r="13" fill="#fff3cd" stroke="#e0a800" stroke-width="2"/>
+    <circle cx="445" cy="110" r="13" fill="#fff3cd" stroke="#e0a800" stroke-width="2"/>
+    <circle cx="375" cy="110" r="13" fill="#fff3cd" stroke="#e0a800" stroke-width="2"/>
+  </svg>
+  <figcaption>Both graphs have 6 nodes, all of degree 2 &mdash; they are the two smallest distinct 2-regular graphs on 6 vertices.</figcaption>
+</figure>
+
+<p>Every node in both graphs starts with the same color (degree 2). At round 1, every node's neighbor multiset is also identical &mdash; two neighbors, each colored "degree 2" &mdash; so every node hashes to the same new color again, in <em>both</em> graphs. Nothing ever differentiates any node from any other, in either graph or across graphs. The final histograms are identical: {single-color: 6} for both. <strong>1-WL is inconclusive</strong>, even though the graphs are obviously not isomorphic (one is a single 6-cycle, the other is two disconnected components).</p>
+
+<div class="key-idea">
+  <strong>Key idea:</strong> This failure is structural, not a matter of running more rounds. Once every node in a graph looks identical to color refinement (as happens for any regular graph where local neighborhoods are all alike), no further round of hashing can introduce a difference. The 2-WL test <em>can</em> tell C6 and 2&times;C3 apart, because it colors node <em>pairs</em> and can detect that C6 has pairs at graph-distance 3 while 2&times;C3's farthest pairs (within a triangle) are at distance 1.
+</div>
+
+<h2>Why this matters for GNNs</h2>
+
+<p>As Lesson 15 covers, message passing is color refinement with a learned hash. GIN reaches the 1-WL ceiling; GCN, GraphSAGE, and GAT sit somewhere below it because their aggregation functions (mean, attention-weighted mean) aren't injective over neighbor multisets. Either way, every message-passing GNN inherits the C6-vs-2&times;C3 blind spot: no amount of training will let a GIN distinguish two graphs that look identical to color refinement.</p>
+
+<div class="nav-links">
+  <a href="../lessons/0015-weisfeiler-leman-hierarchy.html">&larr; Lesson 15</a>
+  <a href="../lessons/0016-geometric-deep-learning-symmetry.html">Lesson 16 &rarr;</a>
+</div>
+
+</body>
+</html>

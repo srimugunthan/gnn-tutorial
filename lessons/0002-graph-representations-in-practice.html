@@ -1,0 +1,154 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Lesson 2: Graph Representations in Practice</title>
+  <link rel="stylesheet" href="../assets/style.css">
+  <script src="../assets/quiz.js"></script>
+</head>
+<body>
+
+<div class="lesson-number">Lesson 2</div>
+<h1>Graph Representations in Practice</h1>
+
+<p>Lesson 1 defined a graph abstractly as <strong>G = (V, E, u)</strong> with node, edge, and global feature matrices. Before we can write a single line of message-passing code, we need to answer a more mundane question: what tensors actually go into the model? This lesson is about the plumbing.</p>
+
+<h2>The example graph</h2>
+
+<p>We'll use one small graph throughout. Four nodes, four undirected edges:</p>
+
+<figure>
+  <svg viewBox="0 0 240 200" width="280" xmlns="http://www.w3.org/2000/svg">
+    <line x1="60" y1="30" x2="160" y2="30" stroke="#1a1a2e" stroke-width="2"/>
+    <line x1="60" y1="30" x2="110" y2="110" stroke="#1a1a2e" stroke-width="2"/>
+    <line x1="160" y1="30" x2="110" y2="110" stroke="#1a1a2e" stroke-width="2"/>
+    <line x1="110" y1="110" x2="180" y2="170" stroke="#1a1a2e" stroke-width="2"/>
+    <circle cx="60" cy="30" r="16" fill="#d8f3dc" stroke="#2d6a4f" stroke-width="2"/>
+    <text x="60" y="35" text-anchor="middle" font-size="14" font-family="Georgia, serif">A</text>
+    <circle cx="160" cy="30" r="16" fill="#d8f3dc" stroke="#2d6a4f" stroke-width="2"/>
+    <text x="160" y="35" text-anchor="middle" font-size="14" font-family="Georgia, serif">B</text>
+    <circle cx="110" cy="110" r="16" fill="#d8f3dc" stroke="#2d6a4f" stroke-width="2"/>
+    <text x="110" y="115" text-anchor="middle" font-size="14" font-family="Georgia, serif">C</text>
+    <circle cx="180" cy="170" r="16" fill="#d8f3dc" stroke="#2d6a4f" stroke-width="2"/>
+    <text x="180" y="175" text-anchor="middle" font-size="14" font-family="Georgia, serif">D</text>
+  </svg>
+  <figcaption>Nodes 0=A, 1=B, 2=C, 3=D. Edges: A&ndash;B, A&ndash;C, B&ndash;C, C&ndash;D.</figcaption>
+</figure>
+
+<p>The node ordering (A=0, B=1, C=2, D=3) is arbitrary &mdash; recall from Lesson 1 that a GNN must be permutation equivariant to this choice &mdash; but every representation below has to agree on <em>some</em> fixed ordering to stay consistent.</p>
+
+<h2>Representation 1: the dense adjacency matrix</h2>
+
+<p>The most direct encoding of connectivity is the matrix <strong>A &isin; {0,1}<sup>|V|&times;|V|</sup></strong> from the glossary, with A<sub>ij</sub> = 1 if an edge connects i and j:</p>
+
+<table style="width:auto; border-collapse:collapse; margin:1rem auto; font-size:0.9rem;">
+  <thead>
+    <tr><th style="padding:0.4rem 0.8rem;"></th><th style="padding:0.4rem 0.8rem;">A</th><th style="padding:0.4rem 0.8rem;">B</th><th style="padding:0.4rem 0.8rem;">C</th><th style="padding:0.4rem 0.8rem;">D</th></tr>
+  </thead>
+  <tbody>
+    <tr><td style="padding:0.4rem 0.8rem; font-weight:700;">A</td><td style="padding:0.4rem 0.8rem; text-align:center;">0</td><td style="padding:0.4rem 0.8rem; text-align:center;">1</td><td style="padding:0.4rem 0.8rem; text-align:center;">1</td><td style="padding:0.4rem 0.8rem; text-align:center;">0</td></tr>
+    <tr><td style="padding:0.4rem 0.8rem; font-weight:700;">B</td><td style="padding:0.4rem 0.8rem; text-align:center;">1</td><td style="padding:0.4rem 0.8rem; text-align:center;">0</td><td style="padding:0.4rem 0.8rem; text-align:center;">1</td><td style="padding:0.4rem 0.8rem; text-align:center;">0</td></tr>
+    <tr><td style="padding:0.4rem 0.8rem; font-weight:700;">C</td><td style="padding:0.4rem 0.8rem; text-align:center;">1</td><td style="padding:0.4rem 0.8rem; text-align:center;">1</td><td style="padding:0.4rem 0.8rem; text-align:center;">0</td><td style="padding:0.4rem 0.8rem; text-align:center;">1</td></tr>
+    <tr><td style="padding:0.4rem 0.8rem; font-weight:700;">D</td><td style="padding:0.4rem 0.8rem; text-align:center;">0</td><td style="padding:0.4rem 0.8rem; text-align:center;">0</td><td style="padding:0.4rem 0.8rem; text-align:center;">1</td><td style="padding:0.4rem 0.8rem; text-align:center;">0</td></tr>
+  </tbody>
+</table>
+
+<p>Clean and intuitive &mdash; and this is exactly the object the original GCN paper (Kipf &amp; Welling) writes its propagation rule in terms of. But it costs O(|V|<sup>2</sup>) memory regardless of how few edges exist. Real-world graphs are almost always <strong>sparse</strong>: a social network with a million users might have a few hundred edges per node, not a million. Storing 10<sup>12</sup> mostly-zero entries to represent 10<sup>8</sup> edges is wasteful in both memory and compute.</p>
+
+<h2>Representation 2: the edge list (COO format)</h2>
+
+<p>Instead of storing the whole matrix, store only the coordinates of the nonzero entries &mdash; the pairs of connected nodes. This is called <strong>COO (coordinate) format</strong>, and it's what PyTorch Geometric calls <code>edge_index</code>: a tensor of shape <strong>[2, |E|]</strong>, where column i gives the (source, target) pair for the i-th edge.</p>
+
+<div class="key-idea">
+  <strong>Key idea:</strong> Because message passing is defined edge-by-edge (gather from neighbors, aggregate, update &mdash; more on this in Lesson 4), a GNN never actually needs the full |V|&times;|V| matrix. It only needs to iterate over existing edges. The edge list is the natural, sparse-friendly format for that computation, which is why libraries like PyTorch Geometric and DGL use it as their default.
+</div>
+
+<p>For our graph, treating each undirected edge as <em>two</em> directed entries (so information flows both ways during message passing):</p>
+
+<pre><code>edge_index = [[0, 1, 0, 2, 1, 2, 2, 3],    # source
+              [1, 0, 2, 0, 2, 1, 3, 2]]    # target
+# shape: [2, 8]  →  4 undirected edges stored as 8 directed entries</code></pre>
+
+<div class="analogy">
+  <strong>Analogy:</strong> This is exactly the sparse-matrix trick you've likely seen elsewhere &mdash; SciPy's <code>coo_matrix</code>, or how a sparse attention mask gets stored. A GNN's edge list is a sparse adjacency matrix in disguise, chosen because real graphs, like real sparse matrices, are mostly zeros.
+</div>
+
+<h2>The node feature matrix, and why row order matters</h2>
+
+<p>Alongside <code>edge_index</code> sits the node feature matrix <strong>X &isin; &Ropf;<sup>|V| &times; d</sup></strong> from Lesson 1. Row i of X must correspond to node i as used in <code>edge_index</code> &mdash; there is no separate "node ID" field. If A/B/C/D have 3-dimensional features:</p>
+
+<pre><code>X = [[x_A0, x_A1, x_A2],   # row 0 → node A
+     [x_B0, x_B1, x_B2],   # row 1 → node B
+     [x_C0, x_C1, x_C2],   # row 2 → node C
+     [x_D0, x_D1, x_D2]]   # row 3 → node D
+# shape: [4, 3]</code></pre>
+
+<p>This is a common source of silent bugs when building a graph dataset by hand: if the row order in X doesn't match the index scheme in <code>edge_index</code>, the model trains without error but learns garbage connectivity.</p>
+
+<h2>Self-loops</h2>
+
+<p>You'll frequently see edge lists augmented with a "self-loop" for every node &mdash; an edge (i, i). This isn't part of the original graph; it's added so that when a node aggregates messages from its neighbors, it also includes its own current features in that aggregation. We'll see exactly why this matters when we derive the GCN update rule in Lesson 7 &mdash; for now, just recognize <code>edge_index</code> entries where source equals target as this deliberate addition, not a data error.</p>
+
+<h2>Batching multiple graphs</h2>
+
+<p>Training rarely happens on one graph. For graph-level tasks (Lesson 3), you have a whole dataset of small graphs &mdash; thousands of molecules, say &mdash; and want to process a batch of them together, the way you'd batch images. But graphs in a batch have different numbers of nodes, so you can't just stack them into a new tensor dimension the way you stack fixed-size images.</p>
+
+<p>The standard trick: concatenate all graphs in the batch into <em>one big graph</em> with no edges between the original graphs (a block-diagonal adjacency structure), and keep a separate <strong>batch vector</strong> that records which original graph each node belongs to.</p>
+
+<div class="key-idea">
+  <strong>Key idea:</strong> Batching in a GNN doesn't add a batch dimension &mdash; it disjoint-unions the graphs into one larger sparse graph, plus an index vector. Message passing naturally respects this because it only ever looks at <code>edge_index</code>, and there are no edges connecting nodes from different original graphs, so no cross-contamination happens. The readout step (Lesson 12) then uses the batch vector to know which nodes to pool together.
+</div>
+
+<h2>Check your understanding</h2>
+
+<div class="quiz">
+  <p class="quiz-question">1. Which format avoids wasting memory on the many zero entries of a large, sparse graph?</p>
+  <ul class="quiz-options">
+    <li data-correct="false">Dense adjacency matrix</li>
+    <li data-correct="true">Sparse edge list</li>
+    <li data-correct="false">Full feature matrix</li>
+    <li data-correct="false">One-hot node vector</li>
+  </ul>
+  <div class="quiz-explanation">A dense adjacency matrix always costs O(|V|&sup2;) regardless of edge count. An edge list (COO format / <code>edge_index</code>) stores only the pairs that actually have an edge, which scales with |E| instead &mdash; the right choice when |E| &lt;&lt; |V|&sup2;, as in nearly all real graphs.</div>
+</div>
+
+<div class="quiz">
+  <p class="quiz-question">2. In an <code>edge_index</code> tensor of shape [2, |E|], what does column i represent?</p>
+  <ul class="quiz-options">
+    <li data-correct="false">The i-th node feature</li>
+    <li data-correct="true">The i-th edge's endpoints</li>
+    <li data-correct="false">The total node count</li>
+    <li data-correct="false">The graph's global attribute</li>
+  </ul>
+  <div class="quiz-explanation">Each column is one directed edge, given as a (source, target) pair of node indices. Node features live in a separate matrix X, indexed by the same node IDs that appear inside <code>edge_index</code>.</div>
+</div>
+
+<div class="quiz">
+  <p class="quiz-question">3. When batching several graphs together for training, how are they kept from exchanging messages with each other?</p>
+  <ul class="quiz-options">
+    <li data-correct="false">It pads every graph identically</li>
+    <li data-correct="false">It merges all node features</li>
+    <li data-correct="true">It keeps graphs fully disconnected</li>
+    <li data-correct="false">It averages every edge weight</li>
+  </ul>
+  <div class="quiz-explanation">Batching concatenates the graphs into one larger graph with no edges added between them &mdash; a block-diagonal structure. Since message passing only follows existing edges, nodes from different original graphs simply never appear as each other's neighbors.</div>
+</div>
+
+<h2>Primary source</h2>
+
+<div class="source-link">
+  Read: <a href="https://www.cs.mcgill.ca/~wlh/grl_book/" target="_blank">"Graph Representation Learning"</a> by William L. Hamilton, <strong>Chapters 1&ndash;2</strong>, for the formal treatment of graph types, adjacency structure, and the properties (degree distribution, connectivity, sparsity) that make real-world graphs the way they are. For a hands-on companion showing this exact <code>edge_index</code> / batching format in code, see PyTorch Geometric's <a href="https://pytorch-geometric.readthedocs.io/en/latest/get_started/introduction.html" target="_blank">"Introduction by Example"</a> tutorial.
+</div>
+
+<div class="followup">
+  Questions about anything in this lesson? Ask your teacher &mdash; run <code>/teach</code> and ask about whatever is unclear. Next up: <strong>Lesson 3 &mdash; The Three Prediction Tasks</strong>, where we'll see how node-, edge-, and graph-level tasks each shape the final layers of a GNN.
+</div>
+
+<div class="nav-links">
+  <a href="0001-why-graphs-what-graphs-encode.html">&larr; Lesson 1: Why Graphs?</a>
+  <a href="0003-three-prediction-tasks.html">Lesson 3: The Three Prediction Tasks &rarr;</a>
+</div>
+
+</body>
+</html>

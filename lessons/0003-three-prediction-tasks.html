@@ -1,0 +1,189 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Lesson 3: The Three Prediction Tasks</title>
+  <link rel="stylesheet" href="../assets/style.css">
+  <script src="../assets/quiz.js"></script>
+</head>
+<body>
+
+<div class="lesson-number">Lesson 3</div>
+<h1>The Three Prediction Tasks</h1>
+
+<p>Lesson 1 introduced three levels of prediction &mdash; node, edge, and graph &mdash; and deliberately punted on the details: "the architecture stays mostly the same, only the final pooling/readout step changes." Lesson 2 gave you the tensors (<code>X</code>, <code>edge_index</code>) that a GNN actually consumes. This lesson closes the loop: given those tensors, what does the <em>output</em> side of the network look like for each task?</p>
+
+<h2>A shared trunk, three different heads</h2>
+
+<p>Every GNN we'll study in this course has the same basic shape. A stack of message-passing layers (the mechanics are Lesson 4's subject) transforms the raw node features <strong>X</strong> into learned node representations. We'll call these <strong>h<sub>i</sub></strong> &mdash; the hidden state, or embedding, of node i &mdash; to distinguish them from the raw input feature x<sub>i</sub> they started as. After L layers, every node i has an embedding h<sub>i</sub> that encodes not just its own features but information gathered from its local neighborhood.</p>
+
+<p>What happens <em>next</em> is where node-, edge-, and graph-level tasks diverge. The encoder (the message-passing stack) is shared; only the head bolted onto the end changes.</p>
+
+<figure>
+  <svg viewBox="0 0 640 280" width="100%" xmlns="http://www.w3.org/2000/svg">
+    <defs>
+      <marker id="l3arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+        <path d="M0,0 L10,5 L0,10 z" fill="#1a1a2e"/>
+      </marker>
+    </defs>
+
+    <rect x="10" y="20" width="170" height="44" rx="6" fill="#d8f3dc" stroke="#2d6a4f" stroke-width="2"/>
+    <text x="95" y="47" text-anchor="middle" font-size="12" font-family="Georgia, serif">Graph input (X, edge_index)</text>
+
+    <line x1="95" y1="64" x2="95" y2="96" stroke="#1a1a2e" stroke-width="2" marker-end="url(#l3arrow)"/>
+
+    <rect x="10" y="98" width="170" height="44" rx="6" fill="#d8f3dc" stroke="#2d6a4f" stroke-width="2"/>
+    <text x="95" y="125" text-anchor="middle" font-size="12" font-family="Georgia, serif">L message-passing layers</text>
+
+    <line x1="95" y1="142" x2="95" y2="174" stroke="#1a1a2e" stroke-width="2" marker-end="url(#l3arrow)"/>
+
+    <rect x="10" y="176" width="170" height="44" rx="6" fill="#fff3cd" stroke="#ffc107" stroke-width="2"/>
+    <text x="95" y="203" text-anchor="middle" font-size="12" font-family="Georgia, serif">Node embeddings H = {h_i}</text>
+
+    <line x1="180" y1="198" x2="328" y2="42" stroke="#1a1a2e" stroke-width="1.5" marker-end="url(#l3arrow)"/>
+    <line x1="180" y1="198" x2="328" y2="142" stroke="#1a1a2e" stroke-width="1.5" marker-end="url(#l3arrow)"/>
+    <line x1="180" y1="198" x2="328" y2="242" stroke="#1a1a2e" stroke-width="1.5" marker-end="url(#l3arrow)"/>
+
+    <rect x="330" y="20" width="300" height="44" rx="6" fill="white" stroke="#1a1a2e" stroke-width="1.5"/>
+    <text x="480" y="38" text-anchor="middle" font-size="12" font-family="Georgia, serif">Node head: y_i = MLP(h_i)</text>
+    <text x="480" y="54" text-anchor="middle" font-size="10" fill="#6c757d" font-family="Georgia, serif">no pooling</text>
+
+    <rect x="330" y="120" width="300" height="44" rx="6" fill="white" stroke="#1a1a2e" stroke-width="1.5"/>
+    <text x="480" y="138" text-anchor="middle" font-size="12" font-family="Georgia, serif">Link head: y_ij = score(h_i, h_j)</text>
+    <text x="480" y="154" text-anchor="middle" font-size="10" fill="#6c757d" font-family="Georgia, serif">pairwise, no pooling</text>
+
+    <rect x="330" y="220" width="300" height="44" rx="6" fill="white" stroke="#1a1a2e" stroke-width="1.5"/>
+    <text x="480" y="238" text-anchor="middle" font-size="12" font-family="Georgia, serif">Graph head: y_G = MLP(READOUT(H))</text>
+    <text x="480" y="254" text-anchor="middle" font-size="10" fill="#6c757d" font-family="Georgia, serif">needs pooling</text>
+  </svg>
+  <figcaption>Same encoder, three heads. Only the graph-level head needs to compress a variable-size set of node embeddings into one fixed-size vector.</figcaption>
+</figure>
+
+<h2>Node-level: classify what's already there</h2>
+
+<p>If the target is a property of individual nodes &mdash; is this account fraudulent, which faction does this club member join, what part of speech is this token &mdash; the answer is already sitting at each node after L layers. You take h<sub>i</sub> and pass it through a shared classifier (typically a small MLP or even a single linear layer) to get a per-node prediction:</p>
+
+<pre><code>y_i = MLP(h_i)   # applied independently to every node i</code></pre>
+
+<div class="key-idea">
+  <strong>Key idea:</strong> Node classification needs <em>no pooling step at all</em>. The same classifier head is applied node-by-node, weight-shared exactly the way a CNN's final 1&times;1 convolution is applied pixel-by-pixel. This is the simplest of the three heads &mdash; everything interesting already happened inside the message-passing layers.
+</div>
+
+<h2>Edge-level: a pairwise scoring function</h2>
+
+<p>Link prediction &mdash; will these two nodes connect? what's the type of this relationship? &mdash; needs to combine <em>two</em> node embeddings into one prediction. This introduces something node classification never needed: a function that takes a <em>pair</em> of embeddings and produces a score.</p>
+
+<pre><code>y_ij = score(h_i, h_j)
+
+# common choices for score():
+#   dot product:      score(h_i, h_j) = h_i · h_j
+#   concat + MLP:      score(h_i, h_j) = MLP([h_i ; h_j])
+#   bilinear:          score(h_i, h_j) = h_i^T W h_j</code></pre>
+
+<p>The score is usually squashed through a sigmoid to get a probability that the edge exists, then trained against known edges (positive examples) and sampled non-edges (negative examples) &mdash; a detail we'll return to when we cover training strategies in Lesson 13.</p>
+
+<div class="analogy">
+  <strong>Analogy:</strong> This is structurally the same move as a Siamese network comparing two embeddings for similarity, or the query&middot;key dot product inside attention. The GNN's job is just to produce embeddings good enough that a simple pairwise function on top of them is informative.
+</div>
+
+<h2>Graph-level: everyone gets a vote</h2>
+
+<p>Graph classification &mdash; is this molecule toxic, will this program crash &mdash; needs a single vector representing the <em>whole</em> graph, but the encoder only ever produced one embedding per node, and graphs vary in node count. Something has to compress a variable-size set {h<sub>1</sub>, &hellip;, h<sub>n</sub>} into one fixed-size vector before a classifier can touch it. That compression step is called <strong>readout</strong> (or pooling):</p>
+
+<pre><code>h_G = READOUT({h_i : i in V})     # e.g. sum, mean, or max over all nodes
+y_G = MLP(h_G)</code></pre>
+
+<p>The simplest readouts are exactly the permutation-invariant aggregators you'd guess from Lesson 1's equivariance discussion &mdash; sum, mean, max over all node embeddings. More expressive options (attention-weighted pooling, hierarchical pooling that clusters nodes first) exist and get their own full treatment in <strong>Lesson 12</strong>; for now, the important point is structural, not which specific readout you pick.</p>
+
+<div class="key-idea">
+  <strong>Key idea:</strong> Graph-level prediction is the only one of the three tasks that strictly requires a permutation-<em>invariant</em> aggregation over all nodes. Node and edge tasks only ever need permutation-<em>equivariant</em> per-node or per-pair operations &mdash; recall the equivariant/invariant distinction from Lesson 1's glossary entries.
+</div>
+
+<h2>Same tensors, different labels</h2>
+
+<p>Tying this back to Lesson 2's plumbing: the input tensors (<code>X</code>, <code>edge_index</code>) are identical across all three tasks. What differs is only the shape of the training <em>label</em> and which head sits on top of the shared encoder:</p>
+
+<table style="width:100%; border-collapse:collapse; margin:1rem 0; font-size:0.9rem;">
+  <thead>
+    <tr style="border-bottom:2px solid var(--border); text-align:left;">
+      <th style="padding:0.5rem;">Task</th>
+      <th style="padding:0.5rem;">Label shape</th>
+      <th style="padding:0.5rem;">Head</th>
+      <th style="padding:0.5rem;">Pooling?</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr style="border-bottom:1px solid var(--border);">
+      <td style="padding:0.5rem;">Node classification</td>
+      <td style="padding:0.5rem;">one label per node</td>
+      <td style="padding:0.5rem;">MLP(h<sub>i</sub>)</td>
+      <td style="padding:0.5rem;">No</td>
+    </tr>
+    <tr style="border-bottom:1px solid var(--border);">
+      <td style="padding:0.5rem;">Link prediction</td>
+      <td style="padding:0.5rem;">one label per node pair</td>
+      <td style="padding:0.5rem;">score(h<sub>i</sub>, h<sub>j</sub>)</td>
+      <td style="padding:0.5rem;">No</td>
+    </tr>
+    <tr>
+      <td style="padding:0.5rem;">Graph classification</td>
+      <td style="padding:0.5rem;">one label per graph</td>
+      <td style="padding:0.5rem;">MLP(READOUT(H))</td>
+      <td style="padding:0.5rem;">Yes</td>
+    </tr>
+  </tbody>
+</table>
+
+<h2>Check your understanding</h2>
+
+<div class="quiz">
+  <p class="quiz-question">1. A GNN scores the fraud risk of every individual account node in a transaction graph. Which output-layer design fits this task?</p>
+  <ul class="quiz-options">
+    <li data-correct="true">Per-node MLP, no pooling</li>
+    <li data-correct="false">Graph-level MLP after pooling</li>
+    <li data-correct="false">Pairwise scorer over embeddings</li>
+    <li data-correct="false">Global readout then softmax</li>
+  </ul>
+  <div class="quiz-explanation">Fraud risk per account is a node-level target, so each node's embedding is passed through a shared classifier directly. No pooling step is involved &mdash; that's only needed once the target is a property of the whole graph.</div>
+</div>
+
+<div class="quiz">
+  <p class="quiz-question">2. Which output-head design is distinctive to link prediction, and not needed for node or graph classification?</p>
+  <ul class="quiz-options">
+    <li data-correct="true">A pairwise node-embedding scorer</li>
+    <li data-correct="false">A per-node softmax classifier</li>
+    <li data-correct="false">A permutation-invariant readout function</li>
+    <li data-correct="false">A stack of MLP layers</li>
+  </ul>
+  <div class="quiz-explanation">Link prediction combines <em>two</em> node embeddings (via a dot product, bilinear form, or concatenation into an MLP) into a single score for whether an edge exists. Neither the node head nor the graph head needs this pairwise combination step.</div>
+</div>
+
+<div class="quiz">
+  <p class="quiz-question">3. Predicting overall molecule solubility from atom-level embeddings requires which step that node classification skips entirely?</p>
+  <ul class="quiz-options">
+    <li data-correct="true">A readout that pools nodes</li>
+    <li data-correct="false">A pairwise edge score function</li>
+    <li data-correct="false">A shared per-node linear layer</li>
+    <li data-correct="false">A larger node feature matrix</li>
+  </ul>
+  <div class="quiz-explanation">Graph-level tasks must compress a variable number of node embeddings into one fixed-size graph vector via a permutation-invariant readout (sum, mean, max, or something fancier &mdash; Lesson 12) before the final classifier can run. Node classification never needs this compression.</div>
+</div>
+
+<h2>Primary source</h2>
+
+<div class="source-link">
+  Read: <a href="https://distill.pub/2021/gnn-intro/" target="_blank">"A Gentle Introduction to Graph Neural Networks"</a> by Sanchez-Lengeling et al. (Distill, 2021), <strong>Section 4</strong> ("Prediction tasks on graphs"). It walks through graph-level, node-level, and edge-level examples with interactive diagrams &mdash; molecule smell prediction, Zach's karate club, and scene-graph edge pruning respectively.
+</div>
+
+<div class="followup">
+  Questions about anything in this lesson? Ask your teacher &mdash; run <code>/teach</code> and ask about whatever is unclear. Next up: <strong>Lesson 4 &mdash; Message Passing: How Nodes Talk to Neighbors</strong>, where we open up what actually happens inside those "L message-passing layers" we've been treating as a black box.
+</div>
+
+<div class="nav-links">
+  <a href="0002-graph-representations-in-practice.html">&larr; Lesson 2: Graph Representations in Practice</a>
+  <a href="0004-message-passing.html">Lesson 4: Message Passing &rarr;</a>
+</div>
+
+</body>
+</html>

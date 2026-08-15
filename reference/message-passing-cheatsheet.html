@@ -1,0 +1,127 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Message-Passing Cheatsheet</title>
+  <link rel="stylesheet" href="../assets/style.css">
+</head>
+<body>
+
+<div class="lesson-number">Reference</div>
+<h1>Message-Passing Cheatsheet</h1>
+
+<p>The gather &rarr; aggregate &rarr; update loop from <a href="../lessons/0004-message-passing.html">Lesson 4</a>, in clean notation and pseudocode. Every GNN variant in this course (GCN, GraphSAGE, GAT, GIN) is this same loop with a specific choice of MSG, AGG, and UPD plugged in.</p>
+
+<h2>The three-step loop</h2>
+
+<p>For each node i, at layer k, using its neighborhood N(i):</p>
+
+<table style="width:100%; border-collapse:collapse; margin:1rem 0; font-size:0.9rem;">
+  <thead>
+    <tr style="border-bottom:2px solid var(--border); text-align:left;">
+      <th style="padding:0.5rem;">Step</th>
+      <th style="padding:0.5rem;">Notation</th>
+      <th style="padding:0.5rem;">In words</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr style="border-bottom:1px solid var(--border);">
+      <td style="padding:0.5rem;">1. Message</td>
+      <td style="padding:0.5rem;">m<sub>j&rarr;i</sub><sup>(k)</sup> = MSG(h<sub>i</sub><sup>(k&minus;1)</sup>, h<sub>j</sub><sup>(k&minus;1)</sup>, e<sub>ij</sub>)</td>
+      <td style="padding:0.5rem;">Compute one message per neighbor j &isin; N(i)</td>
+    </tr>
+    <tr style="border-bottom:1px solid var(--border);">
+      <td style="padding:0.5rem;">2. Aggregate</td>
+      <td style="padding:0.5rem;">a<sub>i</sub><sup>(k)</sup> = AGG({m<sub>j&rarr;i</sub><sup>(k)</sup> : j &isin; N(i)})</td>
+      <td style="padding:0.5rem;">Combine the messages into one vector &mdash; must be permutation-invariant</td>
+    </tr>
+    <tr>
+      <td style="padding:0.5rem;">3. Update</td>
+      <td style="padding:0.5rem;">h<sub>i</sub><sup>(k)</sup> = UPD(h<sub>i</sub><sup>(k&minus;1)</sup>, a<sub>i</sub><sup>(k)</sup>)</td>
+      <td style="padding:0.5rem;">Fold the aggregate into the node's own previous state</td>
+    </tr>
+  </tbody>
+</table>
+
+<p>h<sub>i</sub><sup>(0)</sup> = x<sub>i</sub>, the raw input feature from X (Lesson 1). Stacking k layers of this loop produces h<sub>i</sub><sup>(k)</sup>, the representation used by whichever prediction head (Lesson 3) sits on top.</p>
+
+<h2>Pseudocode</h2>
+
+<pre><code>for k in range(1, L + 1):          # one iteration per GNN layer
+    for i in V:                    # every node, in parallel
+        messages = [MSG(h[i], h[j], e[i, j]) for j in N(i)]
+        a[i] = AGGREGATE(messages)      # sum / mean / max — permutation-invariant
+        h[i] = UPDATE(h[i], a[i])</code></pre>
+
+<h2>Common aggregators</h2>
+
+<table style="width:100%; border-collapse:collapse; margin:1rem 0; font-size:0.9rem;">
+  <thead>
+    <tr style="border-bottom:2px solid var(--border); text-align:left;">
+      <th style="padding:0.5rem;">AGG</th>
+      <th style="padding:0.5rem;">Formula</th>
+      <th style="padding:0.5rem;">Keeps</th>
+      <th style="padding:0.5rem;">Loses</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr style="border-bottom:1px solid var(--border);">
+      <td style="padding:0.5rem;">Sum</td>
+      <td style="padding:0.5rem;">&Sigma;<sub>j&isin;N(i)</sub> m<sub>j</sub></td>
+      <td style="padding:0.5rem;">Neighbor-count (degree) information</td>
+      <td style="padding:0.5rem;">Unbounded scale with degree</td>
+    </tr>
+    <tr style="border-bottom:1px solid var(--border);">
+      <td style="padding:0.5rem;">Mean</td>
+      <td style="padding:0.5rem;">(1/|N(i)|) &Sigma;<sub>j&isin;N(i)</sub> m<sub>j</sub></td>
+      <td style="padding:0.5rem;">A degree-normalized average signal</td>
+      <td style="padding:0.5rem;">How many neighbors contributed</td>
+    </tr>
+    <tr>
+      <td style="padding:0.5rem;">Max</td>
+      <td style="padding:0.5rem;">max<sub>j&isin;N(i)</sub> m<sub>j</sub> (elementwise)</td>
+      <td style="padding:0.5rem;">The single most salient neighbor signal</td>
+      <td style="padding:0.5rem;">Every other neighbor's contribution</td>
+    </tr>
+  </tbody>
+</table>
+
+<h2>Common message and update functions</h2>
+
+<table style="width:100%; border-collapse:collapse; margin:1rem 0; font-size:0.9rem;">
+  <thead>
+    <tr style="border-bottom:2px solid var(--border); text-align:left;">
+      <th style="padding:0.5rem;">Function</th>
+      <th style="padding:0.5rem;">Typical form</th>
+      <th style="padding:0.5rem;">Used by</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr style="border-bottom:1px solid var(--border);">
+      <td style="padding:0.5rem;">MSG</td>
+      <td style="padding:0.5rem;">m<sub>j&rarr;i</sub> = W&middot;h<sub>j</sub> (linear transform of the sender)</td>
+      <td style="padding:0.5rem;">GCN</td>
+    </tr>
+    <tr style="border-bottom:1px solid var(--border);">
+      <td style="padding:0.5rem;">MSG</td>
+      <td style="padding:0.5rem;">m<sub>j&rarr;i</sub> = &alpha;<sub>ij</sub>&middot;(W&middot;h<sub>j</sub>) &mdash; attention-weighted</td>
+      <td style="padding:0.5rem;">GAT (Lesson 9)</td>
+    </tr>
+    <tr>
+      <td style="padding:0.5rem;">UPD</td>
+      <td style="padding:0.5rem;">h<sub>i</sub>' = &sigma;(W<sub>self</sub>&middot;h<sub>i</sub> + a<sub>i</sub>) &mdash; self term plus aggregate, nonlinearity</td>
+      <td style="padding:0.5rem;">GCN, GraphSAGE</td>
+    </tr>
+  </tbody>
+</table>
+
+<p>Note: whether the "self term" (a node's own previous embedding h<sub>i</sub>) is folded in via UPD or via a self-loop added to <code>edge_index</code> (Lesson 2) is an implementation choice &mdash; both accomplish the same thing, and GCN (Lesson 7) does it with self-loops.</p>
+
+<div class="nav-links">
+  <a href="../lessons/0004-message-passing.html">&larr; Lesson 4: Message Passing</a>
+  <span></span>
+</div>
+
+</body>
+</html>

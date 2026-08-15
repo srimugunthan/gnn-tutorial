@@ -1,0 +1,275 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>GNN Glossary</title>
+  <link rel="stylesheet" href="../assets/style.css">
+</head>
+<body>
+
+<div class="lesson-number">Reference</div>
+<h1>GNN Glossary</h1>
+
+<p>Quick-reference definitions for GNN terminology, covering Lessons 1&ndash;23. Grouped roughly by the module that introduces each term.</p>
+
+<h2>Graph fundamentals</h2>
+
+<dl style="line-height:1.6;">
+  <dt style="font-weight:700; margin-top:0.75rem;">Graph G = (V, E, u)</dt>
+  <dd>A data structure consisting of nodes (V), edges (E), and optional global attributes (u). Each component can carry a feature vector.</dd>
+
+  <dt style="font-weight:700; margin-top:0.75rem;">Node (vertex)</dt>
+  <dd>An entity in the graph. Carries a feature vector x<sub>i</sub> &isin; &Ropf;<sup>d</sup>.</dd>
+
+  <dt style="font-weight:700; margin-top:0.75rem;">Edge</dt>
+  <dd>A connection between two nodes. Can be directed or undirected. Can carry a feature vector e<sub>ij</sub> &isin; &Ropf;<sup>d</sup>.</dd>
+
+  <dt style="font-weight:700; margin-top:0.75rem;">Adjacency matrix</dt>
+  <dd>A matrix A &isin; {0,1}<sup>|V|&times;|V|</sup> where A<sub>ij</sub>=1 if an edge exists from node i to node j.</dd>
+
+  <dt style="font-weight:700; margin-top:0.75rem;">Neighborhood N(i)</dt>
+  <dd>The set of nodes directly connected to node i by an edge.</dd>
+
+  <dt style="font-weight:700; margin-top:0.75rem;">Degree</dt>
+  <dd>The number of edges incident to a node. For directed graphs: in-degree and out-degree.</dd>
+
+  <dt style="font-weight:700; margin-top:0.75rem;">Sparse graph</dt>
+  <dd>A graph where |E| &lt;&lt; |V|&sup2; &mdash; the vast majority of possible node pairs are unconnected. Almost all real-world graphs are sparse, which is why dense adjacency matrices are avoided in practice.</dd>
+
+  <dt style="font-weight:700; margin-top:0.75rem;">Edge list / COO format</dt>
+  <dd>A sparse representation of connectivity that stores only the (source, target) pairs that have an edge, rather than the full adjacency matrix. In PyTorch Geometric, this is the <code>edge_index</code> tensor of shape [2, |E|].</dd>
+
+  <dt style="font-weight:700; margin-top:0.75rem;">Self-loop</dt>
+  <dd>An edge (i, i) added from a node to itself, so that a node's own features are included when it aggregates messages from its neighbors. Not part of the original graph &mdash; added deliberately at data-processing time.</dd>
+
+  <dt style="font-weight:700; margin-top:0.75rem;">Batching (graph batching)</dt>
+  <dd>Combining multiple graphs into one training batch by forming their disjoint union &mdash; a single larger graph with no edges between the original graphs &mdash; plus a batch vector recording which original graph each node came from.</dd>
+</dl>
+
+<h2>GNN concepts &amp; prediction tasks</h2>
+
+<dl style="line-height:1.6;">
+  <dt style="font-weight:700; margin-top:0.75rem;">Permutation equivariance</dt>
+  <dd>A function f is permutation equivariant if reordering the input nodes produces the same reordering in the output: f(Px) = Pf(x). The graph analogue of translation equivariance in CNNs.</dd>
+
+  <dt style="font-weight:700; margin-top:0.75rem;">Permutation invariance</dt>
+  <dd>A function f is permutation invariant if the output is unchanged by node reordering: f(Px) = f(x). Required for graph-level predictions.</dd>
+
+  <dt style="font-weight:700; margin-top:0.75rem;">Node-level prediction</dt>
+  <dd>Predict a label or value per node (e.g., classifying users in a social network).</dd>
+
+  <dt style="font-weight:700; margin-top:0.75rem;">Edge-level prediction</dt>
+  <dd>Predict a label or value per edge (e.g., link prediction, bond type classification).</dd>
+
+  <dt style="font-weight:700; margin-top:0.75rem;">Graph-level prediction</dt>
+  <dd>Predict a label or value for the entire graph (e.g., molecular property prediction). Requires a readout/pooling step to aggregate node representations.</dd>
+
+  <dt style="font-weight:700; margin-top:0.75rem;">Node embedding h<sub>i</sub></dt>
+  <dd>The learned hidden representation of node i after one or more message-passing layers, as distinct from its raw input feature x<sub>i</sub>. h<sub>i</sub><sup>(0)</sup> = x<sub>i</sub>.</dd>
+
+  <dt style="font-weight:700; margin-top:0.75rem;">Pairwise scoring function (link prediction)</dt>
+  <dd>A function that combines two node embeddings into a single score for whether an edge exists or what its type is &mdash; e.g. dot product h<sub>i</sub>&middot;h<sub>j</sub>, bilinear h<sub>i</sub><sup>T</sup>Wh<sub>j</sub>, or concat+MLP.</dd>
+
+  <dt style="font-weight:700; margin-top:0.75rem;">Readout / pooling function</dt>
+  <dd>A permutation-invariant function mapping the set of final node embeddings {h<sub>v</sub>} to a single graph-level vector h<sub>G</sub>. Sum, mean, and max are the standard parameter-free choices; sum uniquely preserves multiset cardinality (node count) information. See <em>Hierarchical pooling</em> below for a learned, multi-layer alternative.</dd>
+</dl>
+
+<h2>Message passing</h2>
+
+<dl style="line-height:1.6;">
+  <dt style="font-weight:700; margin-top:0.75rem;">Message function (MSG)</dt>
+  <dd>The learned function computing what a neighbor j sends to node i during one message-passing layer: m<sub>j&rarr;i</sub> = MSG(h<sub>i</sub>, h<sub>j</sub>, e<sub>ij</sub>).</dd>
+
+  <dt style="font-weight:700; margin-top:0.75rem;">Aggregation function (AGG)</dt>
+  <dd>The permutation-invariant function combining all incoming messages at a node into one fixed-size vector (e.g. sum, mean, max). Must be order-independent because a node's neighbor set has no canonical ordering.</dd>
+
+  <dt style="font-weight:700; margin-top:0.75rem;">Update function (UPD)</dt>
+  <dd>The learned function combining a node's own previous state with its aggregated incoming messages to produce its new state: h<sub>i</sub>' = UPD(h<sub>i</sub>, a<sub>i</sub>).</dd>
+
+  <dt style="font-weight:700; margin-top:0.75rem;">k-hop neighborhood</dt>
+  <dd>The set of nodes reachable from node i within k edge-traversals. After k message-passing layers, h<sub>i</sub><sup>(k)</sup> is generically a function of exactly this set.</dd>
+
+  <dt style="font-weight:700; margin-top:0.75rem;">Receptive field (GNN)</dt>
+  <dd>The set of nodes that can possibly influence a given node's embedding after k layers &mdash; its k-hop neighborhood. Direct graph analogue of a CNN pixel's receptive field growing with stacked convolutional layers.</dd>
+
+  <dt style="font-weight:700; margin-top:0.75rem;">Over-smoothing</dt>
+  <dd>The tendency of node embeddings to become indistinguishable as GNN depth increases, because repeated neighbor-averaging acts as a low-pass (Laplacian smoothing) filter that erodes the high-frequency signal separating nodes. Named and formalized by Li, Han &amp; Wu (2018).</dd>
+
+  <dt style="font-weight:700; margin-top:0.75rem;">Residual / skip connection (GNN)</dt>
+  <dd>A connection that re-injects an earlier-layer or the original (layer-0) node embedding at each layer, preventing repeated smoothing from fully washing out the identity signal. Used in GCNII's initial-residual design.</dd>
+
+  <dt style="font-weight:700; margin-top:0.75rem;">PairNorm</dt>
+  <dd>A normalization layer applied after each message-passing layer that rescales node embeddings to keep total pairwise distance between nodes roughly constant, directly counteracting embedding collapse (Zhao &amp; Akoglu, 2019).</dd>
+
+  <dt style="font-weight:700; margin-top:0.75rem;">DropEdge</dt>
+  <dd>A regularization technique that randomly removes a fraction of edges at each training step, slowing the rate of over-smoothing while also acting as data augmentation (Rong et al., 2020).</dd>
+</dl>
+
+<h2>Architectures</h2>
+
+<dl style="line-height:1.6;">
+  <dt style="font-weight:700; margin-top:0.75rem;">Spectral graph convolution</dt>
+  <dd>A graph convolution defined by filtering a signal in the eigenbasis of the graph Laplacian (its "graph Fourier" basis). Exact spectral convolutions require an O(|V|&sup3;) eigendecomposition and produce non-localized filters; GCN's propagation rule is derived by truncating this to a first-order, spatially-localized approximation.</dd>
+
+  <dt style="font-weight:700; margin-top:0.75rem;">Degree normalization</dt>
+  <dd>Scaling an aggregation step by node degree so that high-degree neighbors don't dominate the aggregated signal purely by having more edges. GCN's specific form, D&#771;<sup>&minus;1/2</sup>&Atilde;D&#771;<sup>&minus;1/2</sup>, normalizes symmetrically by both the sender's and receiver's degree.</dd>
+
+  <dt style="font-weight:700; margin-top:0.75rem;">Transductive learning</dt>
+  <dd>A learning setting where the model is trained and evaluated on one fixed graph (or dataset) known in full at training time. GCN, as originally proposed, is transductive: its propagation rule is tied to a specific graph's adjacency and degree matrices. In practice for node classification, this means train/validation/test nodes all sit in the same graph during training &mdash; their features and edges remain visible to message passing throughout, and only their labels are masked from the loss (unlike i.i.d. splits, where test examples are physically absent from training data).</dd>
+
+  <dt style="font-weight:700; margin-top:0.75rem;">Inductive learning</dt>
+  <dd>A learning setting where the model generalizes to nodes, edges, or entire graphs not seen during training. Requires learning parameters as functions of local structure and features rather than as a lookup table tied to one fixed graph. GraphSAGE was designed explicitly for this setting.</dd>
+
+  <dt style="font-weight:700; margin-top:0.75rem;">Attention coefficient</dt>
+  <dd>A learned, content-dependent weight a node assigns to a neighbor's message, computed from both nodes' features (e.g. GAT's e<sub>ij</sub> = LeakyReLU(a<sup>T</sup>[Wh<sub>i</sub> &Vert; Wh<sub>j</sub>]), normalized via softmax into &alpha;<sub>ij</sub>). Contrasts with GCN's fixed, structure-only weighting.</dd>
+
+  <dt style="font-weight:700; margin-top:0.75rem;">Injective aggregation</dt>
+  <dd>An aggregation function that maps every distinct multiset of neighbor features to a distinct output, with no information loss. Sum aggregation, combined with an MLP, can be injective; mean and max provably cannot (e.g. mean cannot distinguish {1,1} from {1,1,1}). GIN uses this property to match WL-test expressiveness.</dd>
+</dl>
+
+<h2>Pooling, training &amp; shallow embeddings</h2>
+
+<dl style="line-height:1.6;">
+  <dt style="font-weight:700; margin-top:0.75rem;">Hierarchical pooling (DiffPool)</dt>
+  <dd>A pooling approach that coarsens a graph across several layers via learned, differentiable soft cluster assignments, rather than pooling all nodes flat in one step. Trained end-to-end with the rest of the GNN. Introduced by Ying et al. (2018).</dd>
+
+  <dt style="font-weight:700; margin-top:0.75rem;">Negative sampling</dt>
+  <dd>Manufacturing node pairs with no edge between them (negative examples) to pair against real edges (positive examples), since a graph only records positive facts. Used to train link-prediction losses such as binary cross-entropy or margin/ranking losses.</dd>
+
+  <dt style="font-weight:700; margin-top:0.75rem;">Self-supervised learning (on graphs)</dt>
+  <dd>Training an encoder using signal derived from the graph's own structure and features &mdash; e.g. predicting held-out edges, or contrasting a node's embedding against a global graph summary (Deep Graph Infomax) &mdash; rather than external labels. Useful when labels are scarce.</dd>
+
+  <dt style="font-weight:700; margin-top:0.75rem;">Shallow embedding</dt>
+  <dd>A node representation stored as a single row of a directly-learned lookup table Z &isin; &Ropf;<sup>|V|&times;d</sup>, indexed by node ID, with no dependence on node features or a shared encoding function. DeepWalk, node2vec, and LINE are the canonical examples, predating GNN encoders.</dd>
+
+  <dt style="font-weight:700; margin-top:0.75rem;">Random walk (graph)</dt>
+  <dd>A sequence of nodes generated by repeatedly hopping from the current node to one of its neighbors (uniformly, as in DeepWalk, or with bias, as in node2vec). Used as a "sentence" of node IDs for skip-gram-style training.</dd>
+
+  <dt style="font-weight:700; margin-top:0.75rem;">Skip-gram objective</dt>
+  <dd>A training objective, borrowed from word2vec, that predicts nearby items in a sequence from a center item's embedding. Applied to graphs by treating nodes that co-occur within a random-walk window as "nearby," training embeddings so co-occurring nodes end up similar.</dd>
+</dl>
+
+<h2>Expressiveness &amp; theory</h2>
+
+<dl style="line-height:1.6;">
+  <dt style="font-weight:700; margin-top:0.75rem;">Weisfeiler-Leman (WL) test / 1-WL</dt>
+  <dd>A classical graph-isomorphism heuristic, also called color refinement: iteratively recolor each node by hashing its own color with the multiset of its neighbors' colors, until the coloring stabilizes, then compare final color histograms. Differing histograms prove non-isomorphism; matching histograms are inconclusive. Serves as a provable upper bound on the expressiveness of any standard message-passing GNN &mdash; no such GNN can distinguish two graphs 1-WL cannot. GIN reaches this bound exactly via injective sum-aggregation.</dd>
+
+  <dt style="font-weight:700; margin-top:0.75rem;">WL-equivalence</dt>
+  <dd>Two graphs are WL-equivalent if 1-WL cannot distinguish them (their final color histograms match). A message-passing GNN can never separate WL-equivalent graphs, regardless of training.</dd>
+
+  <dt style="font-weight:700; margin-top:0.75rem;">k-WL hierarchy</dt>
+  <dd>A sequence of increasingly powerful isomorphism tests: k-WL colors k-tuples of nodes rather than single nodes. Each level is strictly more discriminative than the last. k-GNNs (Morris et al., 2019) are the neural analogue, matching k-WL's power exactly, at O(n<sup>k</sup>) cost.</dd>
+
+  <dt style="font-weight:700; margin-top:0.75rem;">Over-squashing</dt>
+  <dd>The distortion of long-range information in a GNN as it's compressed through an exponentially growing number of multi-hop paths into fixed-size node vectors. Distinct from over-smoothing, though both worsen with depth and graph topology (e.g. narrow bottlenecks in the graph).</dd>
+
+  <dt style="font-weight:700; margin-top:0.75rem;">Geometric deep learning</dt>
+  <dd>A unifying framework (Bronstein, Bruna, Cohen, Veli&#269;kovi&#263;, 2021) describing architectures by the domain they operate on (grid, graph, manifold, &hellip;), the symmetry group that domain admits, and the invariance/equivariance the architecture's layers respect under that group. CNNs, GNNs, and Transformers are all instances of the same blueprint with different groups.</dd>
+
+  <dt style="font-weight:700; margin-top:0.75rem;">Group equivariance</dt>
+  <dd>A function is equivariant to a symmetry group if transforming the input by a group element produces the correspondingly transformed output. Permutation equivariance (graphs) and translation equivariance (grids/CNNs) are both instances of this general property under different groups.</dd>
+
+  <dt style="font-weight:700; margin-top:0.75rem;">Graph transformer</dt>
+  <dd>An architecture that applies Transformer-style full self-attention (every node attends to every other node) to graph-structured data, typically combined with positional/structural encodings and, in hybrid designs like GraphGPS, a parallel sparse message-passing path.</dd>
+
+  <dt style="font-weight:700; margin-top:0.75rem;">Positional encoding (graph)</dt>
+  <dd>Extra per-node features added before attention to inform a graph transformer about graph structure, since full attention on its own is blind to edges. Common schemes include Laplacian eigenvector PE (global structural position, from the graph Laplacian's eigenvectors) and random-walk PE / RWPE (local structural role, from k-step random-walk return probabilities).</dd>
+</dl>
+
+<h2>Heterogeneous &amp; knowledge graphs</h2>
+
+<dl style="line-height:1.6;">
+  <dt style="font-weight:700; margin-top:0.75rem;">Heterogeneous graph</dt>
+  <dd>A graph with more than one node type and/or more than one edge (relation) type, each carrying its own semantics &mdash; e.g., Author/Paper/Venue nodes connected by writes/cites/published_in edges. A strict generalization of the single-type graphs used in Modules 1&ndash;5.</dd>
+
+  <dt style="font-weight:700; margin-top:0.75rem;">Relation-specific weight matrix</dt>
+  <dd>A weight matrix W<sub>r</sub> learned separately for each relation type r, so that a heterogeneous GNN doesn't force semantically different edges (e.g., "cites" vs "writes") through the same transformation. Used in R-GCN; regularized via basis or block-diagonal decomposition to control parameter growth as the number of relations grows.</dd>
+
+  <dt style="font-weight:700; margin-top:0.75rem;">Meta-path</dt>
+  <dd>A hand-specified composite relation over a heterogeneous graph's schema, e.g. Author&ndash;Paper&ndash;Author for co-authorship. Used by HAN to define homogeneous neighborhoods for attention; HGT avoids requiring these by attending over meta-relation triplets instead.</dd>
+
+  <dt style="font-weight:700; margin-top:0.75rem;">Knowledge graph</dt>
+  <dd>A heterogeneous graph where every edge is a fact, written as a triple (head entity, relation, tail entity). The dominant task is knowledge graph completion &mdash; predicting plausible missing triples.</dd>
+
+  <dt style="font-weight:700; margin-top:0.75rem;">Knowledge graph embedding (KGE)</dt>
+  <dd>A family of "shallow" (non-message-passing) methods that learn a vector per entity and per relation, optimized so a scoring function f(h, r, t) is high for true triples and low for corrupted ones. TransE, DistMult, and ComplEx are the canonical examples.</dd>
+
+  <dt style="font-weight:700; margin-top:0.75rem;">TransE scoring</dt>
+  <dd>Scores a triple by how close h + r lands to t: score(h,r,t) = &minus;&Vert;h + r &minus; t&Vert;. Cheap and effective for one-to-one relations, but structurally unable to represent symmetric or many-to-many relations well.</dd>
+
+  <dt style="font-weight:700; margin-top:0.75rem;">DistMult scoring</dt>
+  <dd>A bilinear scoring function score(h,r,t) = h<sup>T</sup>diag(r)t, with each relation represented as a diagonal matrix (vector). Symmetric in h and t by construction, so it cannot represent antisymmetric relations (e.g., parent_of).</dd>
+
+  <dt style="font-weight:700; margin-top:0.75rem;">ComplEx scoring</dt>
+  <dd>A bilinear scoring function over complex-valued entity and relation embeddings, score(h,r,t) = Re(&sum; h<sub>i</sub> r<sub>i</sub> conj(t<sub>i</sub>)). The conjugate on the tail breaks DistMult's h/t symmetry, letting ComplEx represent both symmetric and antisymmetric relations.</dd>
+</dl>
+
+<h2>Temporal &amp; dynamic graphs</h2>
+
+<dl style="line-height:1.6;">
+  <dt style="font-weight:700; margin-top:0.75rem;">Discrete-time (snapshot) dynamic graph</dt>
+  <dd>A dynamic graph observed as a sequence of static graphs G<sub>1</sub>&hellip;G<sub>T</sub> at fixed intervals. Time is a coarse index; timing differences within a snapshot window are lost. EvolveGCN operates in this setting.</dd>
+
+  <dt style="font-weight:700; margin-top:0.75rem;">Continuous-time (event-stream) dynamic graph</dt>
+  <dd>A dynamic graph observed as a stream of individually timestamped, irregularly-spaced events with no binning. The natural framing for transaction data. TGAT, TGN, and DyRep all operate in this setting.</dd>
+
+  <dt style="font-weight:700; margin-top:0.75rem;">Temporal memory module</dt>
+  <dd>A persistent per-node vector (used in TGN) that summarizes a node's event history, updated incrementally via a message function and a recurrent memory updater (e.g., GRU) each time a new event touches that node &mdash; avoiding the need to rescan full history at query time.</dd>
+
+  <dt style="font-weight:700; margin-top:0.75rem;">Functional time encoding</dt>
+  <dd>A learned mapping from a continuous time delta into a feature vector, grounded in Bochner's theorem, used by TGAT to make self-attention over a temporal neighborhood time-aware &mdash; conceptually similar to positional encoding in sequence Transformers, but continuous and learned.</dd>
+</dl>
+
+<h2>Fraud &amp; AML</h2>
+
+<dl style="line-height:1.6;">
+  <dt style="font-weight:700; margin-top:0.75rem;">Class imbalance (fraud/AML)</dt>
+  <dd>The condition where confirmed fraud or laundering activity makes up a tiny fraction of all transactions, so naive accuracy-optimizing models learn to predict "legitimate" for everything. Requires resampling, reweighted/focal losses, or fraud-aware sampling rather than standard cross-entropy training.</dd>
+
+  <dt style="font-weight:700; margin-top:0.75rem;">Relation camouflage / heterophily (fraud graphs)</dt>
+  <dd>The tendency of fraudulent nodes to deliberately transact with legitimate ones to blend in, producing neighborhoods where a fraud node's immediate neighbors are disproportionately legitimate &mdash; the opposite of the homophily assumption many GNN architectures (e.g., plain GCN) implicitly rely on.</dd>
+
+  <dt style="font-weight:700; margin-top:0.75rem;">Fan-in / fan-out / cycle (AML motifs)</dt>
+  <dd>Structural transaction patterns associated with money-laundering typologies: fan-in (many accounts feeding one &mdash; placement/smurfing), fan-out (one account rapidly distributing to many &mdash; distribution), and cycles (funds routed back toward their origin through intermediaries &mdash; layering). Visible only at the subgraph level, not from any single transaction's features.</dd>
+</dl>
+
+<h2>Generative models &amp; LLMs</h2>
+
+<dl style="line-height:1.6;">
+  <dt style="font-weight:700; margin-top:0.75rem;">Graph generation (deep generative models for graphs)</dt>
+  <dd>The task of learning to produce new, plausible graphs from a training distribution of graphs, rather than predicting labels on a fixed input graph.</dd>
+
+  <dt style="font-weight:700; margin-top:0.75rem;">Graph matching (permutation alignment)</dt>
+  <dd>An algorithm that searches for the node permutation of one graph that best aligns it to another, used to compute a meaningful reconstruction loss between a generated graph and a target graph when neither has a canonical node ordering.</dd>
+
+  <dt style="font-weight:700; margin-top:0.75rem;">GraphVAE</dt>
+  <dd>A variational autoencoder for graphs (Simonovsky &amp; Komodakis, 2018) whose decoder outputs a full probabilistic adjacency and feature matrix at once, using an approximate graph-matching step to compute reconstruction loss. Limited in practice to small graphs due to O(n&sup2;) output size and roughly O(n&#8308;) matching cost.</dd>
+
+  <dt style="font-weight:700; margin-top:0.75rem;">Autoregressive graph model</dt>
+  <dd>A generative model that builds a graph sequentially &mdash; adding one node and its edges at a time, conditioned on the graph built so far &mdash; rather than producing the whole structure in one shot.</dd>
+
+  <dt style="font-weight:700; margin-top:0.75rem;">GraphRNN</dt>
+  <dd>An autoregressive graph generator (You et al., 2018) using a graph-level RNN to add nodes and an edge-level RNN to decide edges to prior nodes as Bernoulli draws. Trains on a BFS node ordering, which bounds each edge decision to a recent window and lets it scale to much larger graphs than GraphVAE.</dd>
+
+  <dt style="font-weight:700; margin-top:0.75rem;">Graph-to-text serialization</dt>
+  <dd>Converting a graph's structure (nodes, edges, features) into a natural-language or structured text prompt so a large language model can reason over it directly, without a GNN.</dd>
+
+  <dt style="font-weight:700; margin-top:0.75rem;">Text-attributed graph</dt>
+  <dd>A graph whose nodes (or edges) carry natural-language text &mdash; e.g. paper abstracts, product descriptions &mdash; which must be embedded into a feature matrix before a GNN can consume it.</dd>
+
+  <dt style="font-weight:700; margin-top:0.75rem;">LLM&ndash;GNN integration paradigms (Enhancer / Predictor / Alignment)</dt>
+  <dd>A taxonomy for how LLMs and GNNs are combined: LLM as Enhancer (LLM improves node/edge features fed into a GNN), LLM as Predictor (LLM makes the final prediction from a graph serialization), and GNN&ndash;LLM Alignment (the two are trained jointly in a shared representation space).</dd>
+
+  <dt style="font-weight:700; margin-top:0.75rem;">GraphRAG</dt>
+  <dd>A retrieval-augmented generation approach that builds a knowledge graph from a text corpus, clusters it into communities with summaries, and retrieves along that graph structure (in addition to or instead of flat embedding similarity) to ground LLM generation &mdash; especially useful for questions whose answer is scattered across many documents.</dd>
+</dl>
+
+<div class="nav-links">
+  <a href="../lessons/0001-why-graphs-what-graphs-encode.html">&larr; Lesson 1</a>
+  <a href="../lessons/0002-graph-representations-in-practice.html">Lesson 2 &rarr;</a>
+</div>
+
+</body>
+</html>

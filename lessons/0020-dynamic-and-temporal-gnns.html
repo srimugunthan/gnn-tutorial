@@ -1,0 +1,124 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Lesson 20: Dynamic and Temporal GNNs</title>
+  <link rel="stylesheet" href="../assets/style.css">
+  <script src="../assets/quiz.js"></script>
+</head>
+<body>
+
+<div class="lesson-number">Lesson 20</div>
+<h1>Dynamic and Temporal GNNs</h1>
+
+<p>Every architecture in this course so far has quietly made one more assumption on top of "one node type, one edge type": the graph doesn't change. Compute the adjacency structure once, run message passing, get an embedding. Real graphs you'd actually care about for fraud and AML aren't like that. An account isn't fixed in place with a static set of counterparties &mdash; it accumulates a stream of transactions, each one a new, timestamped edge. The graph you'd want to reason about at 3pm is not the graph you'd want to reason about at 9am. This lesson is about GNNs that treat time as a first-class input rather than an afterthought.</p>
+
+<h2>Two fundamentally different ways to have "time"</h2>
+
+<p>Before any architecture, there's a modeling fork that matters more than which specific model you pick:</p>
+
+<ul>
+  <li><strong>Discrete-time (snapshot) graphs:</strong> the graph is a sequence of static graphs G<sub>1</sub>, G<sub>2</sub>, &hellip;, G<sub>T</sub> &mdash; e.g., "the transaction graph as of the end of each day." Time is a coarse index. Two events one minute apart and one 23 hours apart, if they land in the same snapshot, become indistinguishable.</li>
+  <li><strong>Continuous-time (event-stream) graphs:</strong> the graph is a stream of individually timestamped events, arriving at irregular real-valued times, with no binning at all. This is what a transaction feed actually looks like.</li>
+</ul>
+
+<div class="key-idea">
+  <strong>Key idea:</strong> Financial transaction graphs are continuous-time event streams, not snapshots &mdash; money moves whenever it moves, not on a schedule the graph waits for. Forcing them into fixed snapshots throws away exactly the fine-grained timing signal (burst detection, time-since-last-transfer, velocity) that fraud and layering patterns often hinge on. This fork is developed in full in the <a href="../reference/temporal-gnn-patterns.html">Temporal GNN Patterns reference doc</a> &mdash; treat this lesson as the walkthrough and that doc as the lookup table you'll come back to.
+</div>
+
+<h2>EvolveGCN: evolve the weights, not the nodes</h2>
+
+<p><strong>EvolveGCN</strong> (Pareja et al., 2020) stays in the discrete-time, snapshot world, but makes an unusual choice about what "learns over time." Instead of a static GCN applied identically to every snapshot, the GCN's <em>weight matrices themselves</em> are evolved snapshot-to-snapshot by an RNN:</p>
+
+<ul>
+  <li><strong>EvolveGCN-H</strong> treats the weight matrix W<sup>(t)</sup> as the hidden state of a GRU, updated using the current snapshot's node embeddings as input.</li>
+  <li><strong>EvolveGCN-O</strong> treats W<sup>(t)</sup> as the output of an RNN, which is then fed forward as the input to produce W<sup>(t+1)</sup>.</li>
+</ul>
+
+<p>Either way, at each snapshot you get a fresh GCN &mdash; same architecture, different weights &mdash; run on that snapshot's structure. No per-node memory persists; everything about a node's representation is recomputed from the current graph and the current (evolved) weights. This matters for graphs where the node set itself changes a lot: EvolveGCN doesn't need to have seen a given node before to produce weights for it, unlike methods that maintain per-node state directly.</p>
+
+<h2>TGAT: time-aware attention over raw history</h2>
+
+<p><strong>TGAT</strong> (Xu et al., 2020) moves to continuous time. Its central device is a <strong>functional time encoding</strong>: a learned mapping from a time delta (how long ago did this neighbor's edge form, relative to now) into a feature vector, grounded in Bochner's theorem from harmonic analysis &mdash; conceptually similar to the sinusoidal positional encodings you've seen in sequence Transformers, but learned and continuous rather than fixed and discrete. This time-encoding is concatenated onto node features, and a self-attention layer &mdash; structurally the same idea as the graph transformer lesson &mdash; attends over a node's chronologically-ordered neighborhood, weighted partly by how temporally relevant each past neighbor is.</p>
+
+<p>Crucially, TGAT keeps <em>no persistent state</em>. Every time you want an embedding for a node, you recompute it by re-attending over its recent raw neighbor history. That's simple and stateless, but it means the "context window" of history you attend over has to be re-scanned every single query.</p>
+
+<h2>TGN: give every node a memory</h2>
+
+<p><strong>TGN</strong> (Rossi et al., 2020) keeps TGAT's time-encoded attention idea but adds the piece TGAT is missing: a persistent <strong>memory vector</strong> per node, updated incrementally as events happen rather than recomputed from scratch each time. Three pieces work together:</p>
+
+<ol>
+  <li><strong>Message function:</strong> when an event touches a node (e.g., a transaction), compute a message from the event features and the two involved nodes' current memory.</li>
+  <li><strong>Memory updater</strong> (typically a GRU): fold that message into the node's memory, producing an updated memory vector.</li>
+  <li><strong>Graph embedding module:</strong> when a prediction is actually needed, read the current memory vectors of the node and its neighbors (using TGAT-style temporal attention) to produce the final embedding.</li>
+</ol>
+
+<p>The memory is what makes this different from TGAT in practice: a node's entire relevant history is compressed into a fixed-size vector that updates incrementally, the same way an RNN's hidden state summarizes a sequence without re-reading it. TGN's own ablation results show TGAT is effectively a special case of the TGN framework with the memory module switched off.</p>
+
+<div class="analogy">
+  <strong>Analogy:</strong> EvolveGCN is like periodically retraining a static model's weights as new batches of data arrive. TGAT is like a Transformer that re-reads its whole recent context window on every query. TGN is like an RNN with an explicit per-entity hidden state &mdash; it never needs to re-read history because it's already carrying a running summary of it forward.
+</div>
+
+<h2>DyRep, briefly</h2>
+
+<p><strong>DyRep</strong> (Trivedi et al., 2019) predates TGN and shares its state-based instinct, but frames the problem as a <strong>temporal point process</strong> with two coupled dynamics operating at different time scales: <em>topological evolution</em> (new edges/nodes appearing) and <em>node interaction dynamics</em> (activity between nodes that already exist). An attention-based network produces the representations that drive both processes. It's worth knowing by name mainly because TGN's memory mechanism is a direct intellectual descendant of DyRep's per-node state updates &mdash; DyRep got there first, with a more explicit point-process framing.</p>
+
+<h2>Check your understanding</h2>
+
+<div class="quiz">
+  <p class="quiz-question">1. Which architecture evolves the GNN's own weight matrices over time via an RNN, rather than maintaining per-node state?</p>
+  <ul class="quiz-options">
+    <li data-correct="true">EvolveGCN, which regenerates weights per graph snapshot</li>
+    <li data-correct="false">TGAT, which regenerates weights per graph snapshot</li>
+    <li data-correct="false">TGN, which regenerates weights per graph snapshot</li>
+    <li data-correct="false">DyRep, which regenerates weights per graph snapshot</li>
+  </ul>
+  <div class="quiz-explanation">EvolveGCN runs an otherwise-ordinary GCN on each snapshot, but its weight matrix is produced fresh at every snapshot by an RNN (GRU or LSTM) that has seen the weights from prior snapshots. TGAT, TGN, and DyRep are all continuous-time models that don't work in snapshots at all.</div>
+</div>
+
+<div class="quiz">
+  <p class="quiz-question">2. What does TGN's memory module store per node, and how does it update?</p>
+  <ul class="quiz-options">
+    <li data-correct="true">A per-node vector updated by a message function</li>
+    <li data-correct="false">A per-edge vector updated by a message function</li>
+    <li data-correct="false">A per-node matrix updated by a message function</li>
+    <li data-correct="false">A per-graph vector updated by a message function</li>
+  </ul>
+  <div class="quiz-explanation">TGN maintains one memory vector per node. Each event touching that node produces a message (via the message function), which a GRU-based memory updater folds into that node's memory vector incrementally &mdash; no full history rescan needed.</div>
+</div>
+
+<div class="quiz">
+  <p class="quiz-question">3. What is the key practical reason continuous-time models matter more than snapshot models for transaction graphs?</p>
+  <ul class="quiz-options">
+    <li data-correct="true">Transactions arrive continuously, not in fixed time windows</li>
+    <li data-correct="false">Transactions arrive continuously, not in labeled fraud categories</li>
+    <li data-correct="false">Transactions arrive continuously, not in encrypted account numbers</li>
+    <li data-correct="false">Transactions arrive continuously, not in duplicated node features</li>
+  </ul>
+  <div class="quiz-explanation">Transaction feeds are inherently irregular, real-time event streams. Binning them into fixed snapshots discards exactly the fine-grained timing signal (bursts, velocity, time-since-last-transfer) that fraud and layering detection often depends on most.</div>
+</div>
+
+<h2>Reference doc</h2>
+
+<div class="source-link">
+  For the full side-by-side breakdown of how EvolveGCN, TGAT, TGN, and DyRep each handle time, plus a decision framework for which to reach for, see the <a href="../reference/temporal-gnn-patterns.html">Temporal GNN Patterns</a> reference doc built alongside this lesson.
+</div>
+
+<h2>Primary source</h2>
+
+<div class="source-link">
+  Read: Rossi et al., <a href="https://arxiv.org/abs/2006.10637" target="_blank">"Temporal Graph Networks for Deep Learning on Dynamic Graphs"</a> (2020), and Pareja et al., <a href="https://arxiv.org/abs/1902.10191" target="_blank">"EvolveGCN: Evolving Graph Convolutional Networks for Dynamic Graphs"</a> (2020). For the time-encoding mechanism specifically, see Xu et al., <a href="https://arxiv.org/abs/2002.07962" target="_blank">"Inductive Representation Learning on Temporal Graphs"</a> (TGAT, 2020).
+</div>
+
+<div class="followup">
+  Questions about anything in this lesson? Ask your teacher &mdash; run <code>/teach</code> and ask about whatever is unclear. Next up: <strong>Lesson 21 &mdash; GNNs for Fraud and AML Detection</strong>, where these temporal patterns meet the domain they were largely built for.
+</div>
+
+<div class="nav-links">
+  <a href="0019-knowledge-graphs-and-embedding.html">&larr; Lesson 19: Knowledge Graphs and Embedding</a>
+  <a href="0021-gnns-for-fraud-and-aml-detection.html">Lesson 21: GNNs for Fraud and AML Detection &rarr;</a>
+</div>
+
+</body>
+</html>

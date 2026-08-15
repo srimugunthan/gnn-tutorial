@@ -1,0 +1,154 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Temporal GNN Patterns</title>
+  <link rel="stylesheet" href="../assets/style.css">
+</head>
+<body>
+
+<div class="lesson-number">Reference</div>
+<h1>Temporal GNN Patterns</h1>
+
+<p>Every temporal GNN answers the same underlying question &mdash; "how does time get represented in a message-passing model?" &mdash; but the four architectures below answer it in genuinely different ways. This doc exists to keep them from blurring together, and to give you a decision framework for a real problem, especially transaction graphs, which are essentially never natural snapshots.</p>
+
+<h2>The single most important fork: discrete-time vs continuous-time</h2>
+
+<p>Before comparing architectures, separate the two ways a graph can "have time" at all:</p>
+
+<dl style="line-height:1.6;">
+  <dt style="font-weight:700; margin-top:0.75rem;">Discrete-time (snapshot) dynamic graph</dt>
+  <dd>The graph is observed as a sequence of static graphs G<sub>1</sub>, G<sub>2</sub>, &hellip;, G<sub>T</sub> at fixed intervals (e.g., "the transaction graph as of the end of each day"). Time is a coarse index, not a continuous quantity. Two transactions one minute apart and one that's 23 hours apart can land in the same snapshot boundary and become indistinguishable in timing.</dd>
+
+  <dt style="font-weight:700; margin-top:0.75rem;">Continuous-time (event-stream) dynamic graph</dt>
+  <dd>The graph is a stream of timestamped events &mdash; edges (and sometimes nodes) that appear at exact, irregularly-spaced real-valued timestamps. Nothing is binned. A transaction at 14:32:07 and one at 14:32:09 are meaningfully close; one at 09:00:00 the next day is meaningfully far, and the model can tell the difference.</dd>
+</dl>
+
+<div class="key-idea">
+  <strong>Key idea:</strong> Financial transaction graphs are continuous-time event streams by nature &mdash; transactions post whenever they post, not on a schedule the graph waits for. Forcing them into fixed snapshots (daily, hourly) is a modeling simplification that throws away exactly the fine-grained timing information &mdash; burst detection, velocity, time-since-last-transaction &mdash; that fraud and AML detection often depend on most.
+</div>
+
+<figure>
+  <svg viewBox="0 0 460 190" width="460" xmlns="http://www.w3.org/2000/svg">
+    <text x="10" y="20" font-size="12" font-weight="bold" fill="#1a1a2e" font-family="Georgia, serif">Discrete-time (snapshots)</text>
+    <rect x="20" y="35" width="70" height="40" fill="#d8f3dc" stroke="#2d6a4f" stroke-width="2"/>
+    <text x="55" y="58" text-anchor="middle" font-size="11" font-family="Georgia, serif">G&#8321;</text>
+    <rect x="110" y="35" width="70" height="40" fill="#d8f3dc" stroke="#2d6a4f" stroke-width="2"/>
+    <text x="145" y="58" text-anchor="middle" font-size="11" font-family="Georgia, serif">G&#8322;</text>
+    <rect x="200" y="35" width="70" height="40" fill="#d8f3dc" stroke="#2d6a4f" stroke-width="2"/>
+    <text x="235" y="58" text-anchor="middle" font-size="11" font-family="Georgia, serif">G&#8323;</text>
+    <rect x="290" y="35" width="70" height="40" fill="#d8f3dc" stroke="#2d6a4f" stroke-width="2"/>
+    <text x="325" y="58" text-anchor="middle" font-size="11" font-family="Georgia, serif">G&#8324;</text>
+    <text x="20" y="95" font-size="10" fill="#6c757d" font-family="Georgia, serif">day 1</text>
+    <text x="110" y="95" font-size="10" fill="#6c757d" font-family="Georgia, serif">day 2</text>
+    <text x="200" y="95" font-size="10" fill="#6c757d" font-family="Georgia, serif">day 3</text>
+    <text x="290" y="95" font-size="10" fill="#6c757d" font-family="Georgia, serif">day 4</text>
+
+    <text x="10" y="130" font-size="12" font-weight="bold" fill="#1a1a2e" font-family="Georgia, serif">Continuous-time (event stream)</text>
+    <line x1="20" y1="165" x2="440" y2="165" stroke="#1a1a2e" stroke-width="1.5"/>
+    <circle cx="35" cy="165" r="4" fill="#1971c2"/>
+    <circle cx="55" cy="165" r="4" fill="#1971c2"/>
+    <circle cx="62" cy="165" r="4" fill="#1971c2"/>
+    <circle cx="140" cy="165" r="4" fill="#1971c2"/>
+    <circle cx="230" cy="165" r="4" fill="#1971c2"/>
+    <circle cx="238" cy="165" r="4" fill="#1971c2"/>
+    <circle cx="245" cy="165" r="4" fill="#1971c2"/>
+    <circle cx="380" cy="165" r="4" fill="#1971c2"/>
+    <text x="35" y="182" font-size="9" fill="#6c757d" font-family="Georgia, serif">irregular, exact timestamps &mdash;</text>
+    <text x="230" y="182" font-size="9" fill="#6c757d" font-family="Georgia, serif">bursts visible, no bins</text>
+  </svg>
+  <figcaption>Snapshots discard exactly when within a window an event happened; an event stream keeps the real clock, including bursts (a hallmark of layering behavior in AML).</figcaption>
+</figure>
+
+<h2>Four architectures, four mechanisms</h2>
+
+<table style="width:100%; border-collapse:collapse; margin:1rem 0; font-size:0.82rem;">
+  <thead>
+    <tr style="border-bottom:2px solid var(--border); text-align:left;">
+      <th style="padding:0.5rem;">Model</th>
+      <th style="padding:0.5rem;">Time framing</th>
+      <th style="padding:0.5rem;">How time enters the model</th>
+      <th style="padding:0.5rem;">What persists across events</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr style="border-bottom:1px solid var(--border);">
+      <td style="padding:0.5rem; font-weight:700;">EvolveGCN</td>
+      <td style="padding:0.5rem;">Discrete (snapshots)</td>
+      <td style="padding:0.5rem;">The GCN's <em>weight matrices themselves</em> are evolved snapshot-to-snapshot by an RNN (GRU/LSTM). EvolveGCN-H treats W as the RNN's hidden state; EvolveGCN-O treats W as the RNN's output, fed forward as the next input.</td>
+      <td style="padding:0.5rem;">Weight matrices, not node states. Node embeddings are recomputed fresh from each snapshot's structure using the current (evolved) weights.</td>
+    </tr>
+    <tr style="border-bottom:1px solid var(--border);">
+      <td style="padding:0.5rem; font-weight:700;">TGAT</td>
+      <td style="padding:0.5rem;">Continuous (event stream)</td>
+      <td style="padding:0.5rem;">A learned <strong>functional time encoding</strong> (grounded in Bochner's theorem, similar in spirit to Transformer positional encoding) maps a time delta into a feature vector; this is concatenated into node features and fed through self-attention over the node's temporally-ordered neighborhood.</td>
+      <td style="padding:0.5rem;">Nothing persists between queries. Every embedding is recomputed from scratch by attending over recent raw neighbor events &mdash; effectively "memory-less."</td>
+    </tr>
+    <tr style="border-bottom:1px solid var(--border);">
+      <td style="padding:0.5rem; font-weight:700;">TGN</td>
+      <td style="padding:0.5rem;">Continuous (event stream)</td>
+      <td style="padding:0.5rem;">Each node owns a persistent <strong>memory vector</strong>. On every event touching a node, a <strong>message function</strong> computes an update from the event (and the two nodes' current memories); a memory updater (GRU) folds that message into the node's memory. A graph-embedding module (TGAT-style attention) then reads current memories to produce the final embedding used for prediction.</td>
+      <td style="padding:0.5rem;">A compressed per-node memory vector, updated incrementally &mdash; the model doesn't need to re-scan a node's full history at query time.</td>
+    </tr>
+    <tr>
+      <td style="padding:0.5rem; font-weight:700;">DyRep</td>
+      <td style="padding:0.5rem;">Continuous (event stream)</td>
+      <td style="padding:0.5rem;">Models two coupled processes at different time scales &mdash; <em>topological evolution</em> (edges/nodes appearing) and <em>node interaction dynamics</em> (activity between existing nodes) &mdash; as a temporal point process, with an attention-based network producing the node representations that drive both processes.</td>
+      <td style="padding:0.5rem;">Per-node latent state updated on each event, in a similar spirit to TGN's memory but framed explicitly as a point-process intensity model. Predates and partly inspired TGN's memory design.</td>
+    </tr>
+  </tbody>
+</table>
+
+<h2>TGN vs TGAT vs EvolveGCN, disambiguated</h2>
+
+<p>These three are the ones most often blurred together. The distinguishing question for each:</p>
+
+<ul>
+  <li><strong>EvolveGCN &mdash; "what changes over time?"</strong> Answer: the model's parameters. The graph structure at each snapshot is processed by an otherwise-ordinary GCN, but that GCN's weight matrix is different at every snapshot, produced by an RNN that has seen all prior snapshots' weights. No per-node memory exists; everything is recomputed per snapshot.</li>
+  <li><strong>TGAT &mdash; "how do I make attention time-aware?"</strong> Answer: encode the time gap between the query and each neighbor event as a learned feature, then run ordinary self-attention over the (time-encoded) temporal neighborhood. No persistent state anywhere &mdash; it's a time-aware read of raw recent history, recomputed on demand.</li>
+  <li><strong>TGN &mdash; "how do I avoid re-reading a node's whole history every time?"</strong> Answer: maintain a compressed running summary (the memory vector) that's updated incrementally as events arrive, the way an RNN's hidden state summarizes a sequence without re-reading it from scratch. TGN's ablations show TGAT is actually a special case of the TGN framework without the memory module &mdash; memory is the piece TGN adds on top.</li>
+</ul>
+
+<div class="analogy">
+  <strong>Analogy:</strong> EvolveGCN is closest to how you'd retrain a static model's weights periodically as new data batches arrive. TGAT is closest to a Transformer with time-aware positional encoding, re-run fresh on the recent context window each time. TGN is closest to an RNN with an explicit hidden state per entity &mdash; it doesn't need to re-read history because it already carries a running summary of it.
+</div>
+
+<h2>Decision framework</h2>
+
+<table style="width:100%; border-collapse:collapse; margin:1rem 0; font-size:0.85rem;">
+  <thead>
+    <tr style="border-bottom:2px solid var(--border); text-align:left;">
+      <th style="padding:0.5rem;">Situation</th>
+      <th style="padding:0.5rem;">Reach for</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr style="border-bottom:1px solid var(--border);">
+      <td style="padding:0.5rem;">Data genuinely arrives as periodic full-graph exports (e.g., a nightly batch snapshot of an org chart)</td>
+      <td style="padding:0.5rem;">EvolveGCN &mdash; the snapshot framing matches the data as-is</td>
+    </tr>
+    <tr style="border-bottom:1px solid var(--border);">
+      <td style="padding:0.5rem;">Continuous event stream, and you need to score a new event online with minimal per-event compute</td>
+      <td style="padding:0.5rem;">TGN &mdash; incremental memory update is cheap per event; avoids rescanning history</td>
+    </tr>
+    <tr style="border-bottom:1px solid var(--border);">
+      <td style="padding:0.5rem;">Continuous event stream, offline/batch scoring is acceptable, and simplicity (no memory-management bugs) is valued</td>
+      <td style="padding:0.5rem;">TGAT &mdash; recompute-from-neighborhood is simpler to reason about and stateless</td>
+    </tr>
+    <tr>
+      <td style="padding:0.5rem;">Need to explicitly separate "graph is growing" from "existing nodes are interacting"</td>
+      <td style="padding:0.5rem;">DyRep &mdash; its two-process framing makes that distinction explicit</td>
+    </tr>
+  </tbody>
+</table>
+
+<p>Transaction graphs for AML/fraud are the canonical continuous-time, online-scoring case: new transactions arrive constantly, and a suspicious pattern often needs to be flagged before the funds clear, not at the next nightly batch. That's the practical reason TGN-style memory-based architectures show up so often in the applied fraud-detection literature &mdash; see Lesson 21.</p>
+
+<div class="nav-links">
+  <a href="../lessons/0020-dynamic-and-temporal-gnns.html">&larr; Lesson 20</a>
+  <a href="../lessons/0021-gnns-for-fraud-and-aml-detection.html">Lesson 21 &rarr;</a>
+</div>
+
+</body>
+</html>

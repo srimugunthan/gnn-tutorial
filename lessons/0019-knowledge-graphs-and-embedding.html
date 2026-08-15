@@ -1,0 +1,158 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Lesson 19: Knowledge Graphs and Embedding</title>
+  <link rel="stylesheet" href="../assets/style.css">
+  <script src="../assets/quiz.js"></script>
+</head>
+<body>
+
+<div class="lesson-number">Lesson 19</div>
+<h1>Knowledge Graphs and Embedding</h1>
+
+<p>A <strong>knowledge graph</strong> is a heterogeneous graph (Lesson 18) viewed through a specific lens: every edge is a fact, written as a <strong>triple</strong> (h, r, t) &mdash; head entity, relation, tail entity. "(Obama, born_in, Hawaii)." "(Aspirin, treats, Headache)." The graph itself <em>is</em> the database. The task that dominates this space isn't node classification &mdash; it's <strong>knowledge graph completion</strong>: given millions of known facts, predict plausible missing ones. Does the triple (Obama, born_in, Kenya) belong in the graph? Almost certainly not. Does (Aspirin, treats, Fever)? Probably.</p>
+
+<p>This lesson is deliberately not about message passing. It's about a different, older idea &mdash; recall <strong>DeepWalk / node2vec</strong> from the shallow-embeddings lesson, where you learn a lookup-table vector per node with no neural network aggregation at all. <strong>Knowledge graph embedding (KGE)</strong> methods do the same thing for multi-relational graphs: learn a vector per entity <em>and</em> a vector (or matrix) per relation, such that some simple scoring function over (h, r, t) is high for true triples and low for corrupted ones.</p>
+
+<div class="key-idea">
+  <strong>Key idea:</strong> KGE methods don't aggregate neighbor messages the way GCN/GAT/GraphSAGE do. They learn shallow embeddings directly, optimized so a scoring function f(h, r, t) separates true triples from corrupted ones. The relation itself becomes a learned object in the embedding space &mdash; not just a parameterization choice for a weight matrix, as it was for R-GCN in Lesson 18.
+</div>
+
+<h2>TransE: relations as translations</h2>
+
+<p><strong>TransE</strong> (Bordes et al., 2013) has arguably the simplest idea in the whole GNN/graph-representation-learning space: if (h, r, t) is true, the tail's embedding should be reachable from the head's embedding by <em>adding the relation vector</em>:</p>
+
+<pre><code>h + r &asymp; t
+score(h, r, t) = -&Vert; h + r - t &Vert;</code></pre>
+
+<figure>
+  <svg viewBox="0 0 300 180" width="300" xmlns="http://www.w3.org/2000/svg">
+    <defs>
+      <marker id="arrow" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto">
+        <path d="M0,0 L6,3 L0,6 z" fill="#1a1a2e"/>
+      </marker>
+    </defs>
+    <line x1="40" y1="150" x2="150" y2="60" stroke="#2d6a4f" stroke-width="2.5" marker-end="url(#arrow)"/>
+    <text x="70" y="95" font-size="11" fill="#2d6a4f" font-family="Georgia, serif">h</text>
+    <line x1="150" y1="60" x2="240" y2="40" stroke="#1971c2" stroke-width="2.5" marker-end="url(#arrow)"/>
+    <text x="190" y="42" font-size="11" fill="#1971c2" font-family="Georgia, serif">r</text>
+    <line x1="40" y1="150" x2="240" y2="40" stroke="#e8a33d" stroke-width="2" stroke-dasharray="4 3" marker-end="url(#arrow)"/>
+    <text x="120" y="170" font-size="11" fill="#e8a33d" font-family="Georgia, serif">target t</text>
+    <circle cx="40" cy="150" r="3" fill="#1a1a2e"/>
+    <circle cx="240" cy="40" r="3" fill="#1a1a2e"/>
+  </svg>
+  <figcaption>TransE's geometric picture: starting at h, walking along the relation vector r should land close to t. The score is (negative) distance between h+r and the actual t.</figcaption>
+</figure>
+
+<p>TransE is trained with a margin-based ranking loss: true triples should score higher than corrupted ones (formed by swapping in a random head or tail) by at least some margin. It's cheap, scales to huge knowledge graphs, and works well for one-to-one relations. But the translation picture breaks down for relational patterns that are common in real knowledge graphs:</p>
+
+<ul>
+  <li><strong>Symmetric relations</strong> (e.g., is_married_to): if h + r &asymp; t and t + r &asymp; h both hold, adding the two gives 2r &asymp; 0, forcing r toward the zero vector &mdash; which then can't distinguish this relation from any other near-zero relation.</li>
+  <li><strong>One-to-many / many-to-one relations</strong> (e.g., born_in, where many people share a birth country): TransE wants h + r to land at one specific point, but many valid tails would need to sit at that same point, collapsing entities that should stay distinct.</li>
+</ul>
+
+<h2>DistMult: a bilinear score</h2>
+
+<p><strong>DistMult</strong> replaces translation with a bilinear form. Each relation is a <em>diagonal matrix</em> (equivalently, a vector r, since only the diagonal is used), and the score is:</p>
+
+<pre><code>score(h, r, t) = h<sup>T</sup> diag(r) t = &sum;<sub>i</sub> h<sub>i</sub> r<sub>i</sub> t<sub>i</sub></code></pre>
+
+<p>This is cheap (elementwise multiply-then-sum, no full matrix) and empirically strong. But look closely at the formula: swapping h and t leaves the score completely unchanged, since elementwise multiplication commutes. That means DistMult is fundamentally <strong>symmetric</strong> &mdash; it cannot represent antisymmetric relations like parent_of, where (A, parent_of, B) being true should make (B, parent_of, A) false. DistMult would score both triples identically.</p>
+
+<h2>ComplEx: moving to complex-valued embeddings</h2>
+
+<p><strong>ComplEx</strong> (Trouillon et al., 2016) fixes exactly this gap by embedding entities and relations as <em>complex</em> vectors instead of real ones, and scoring with the real part of a Hermitian (conjugated) inner product:</p>
+
+<pre><code>score(h, r, t) = Re( &sum;<sub>i</sub> h<sub>i</sub> r<sub>i</sub> conj(t<sub>i</sub>) )</code></pre>
+
+<p>The conjugate on t is what breaks the symmetry that trapped DistMult: swapping h and t no longer leaves the score unchanged, because conjugation is applied to whichever embedding sits in the tail position. This lets a single, still-simple bilinear-style model represent both symmetric and antisymmetric relations, which is why ComplEx (and its later relatives) generally outperforms both TransE and DistMult on standard knowledge graph completion benchmarks.</p>
+
+<div class="analogy">
+  <strong>Analogy:</strong> Going from DistMult to ComplEx is the same trick as going from a real-valued to a complex-valued rotation matrix in signal processing &mdash; the complex domain gives you a natural notion of "direction" (phase) that a purely real, symmetric bilinear form can't express.
+</div>
+
+<table style="width:100%; border-collapse:collapse; margin:1rem 0; font-size:0.85rem;">
+  <thead>
+    <tr style="border-bottom:2px solid var(--border); text-align:left;">
+      <th style="padding:0.5rem;">Model</th>
+      <th style="padding:0.5rem;">Scoring intuition</th>
+      <th style="padding:0.5rem;">Weak spot</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr style="border-bottom:1px solid var(--border);">
+      <td style="padding:0.5rem;">TransE</td>
+      <td style="padding:0.5rem;">h + r &asymp; t (translation)</td>
+      <td style="padding:0.5rem;">Symmetric &amp; many-to-many relations</td>
+    </tr>
+    <tr style="border-bottom:1px solid var(--border);">
+      <td style="padding:0.5rem;">DistMult</td>
+      <td style="padding:0.5rem;">h<sup>T</sup>diag(r)t (bilinear, real)</td>
+      <td style="padding:0.5rem;">Antisymmetric relations</td>
+    </tr>
+    <tr>
+      <td style="padding:0.5rem;">ComplEx</td>
+      <td style="padding:0.5rem;">Re(h<sup>T</sup>diag(r)conj(t)) (bilinear, complex)</td>
+      <td style="padding:0.5rem;">More parameters, still no explicit composition</td>
+    </tr>
+  </tbody>
+</table>
+
+<h2>Where this reconnects to message passing</h2>
+
+<p>These three methods are all "shallow" &mdash; no neighborhood aggregation, just a lookup-table embedding per entity and per relation. In practice, KGE and GNN ideas combine: R-GCN from Lesson 18 is often used as an <em>encoder</em> that produces entity embeddings via relational message passing, which then feed into a DistMult-style <em>decoder</em> for the actual link-prediction score. The GNN handles structural context; the shallow scoring function handles the final triple-plausibility judgment. This encoder/decoder split is worth remembering &mdash; it reappears whenever a graph task needs both "understand the neighborhood" and "score a specific relationship."</p>
+
+<h2>Check your understanding</h2>
+
+<div class="quiz">
+  <p class="quiz-question">1. Why does TransE struggle to represent a symmetric relation like "is_married_to"?</p>
+  <ul class="quiz-options">
+    <li data-correct="true">It forces the relation vector to zero</li>
+    <li data-correct="false">It forces the entity vectors to align</li>
+    <li data-correct="false">It forces the embedding dimension to shrink</li>
+    <li data-correct="false">It forces the loss function to diverge</li>
+  </ul>
+  <div class="quiz-explanation">If h + r &asymp; t and t + r &asymp; h both need to hold, adding them gives 2r &asymp; 0, pushing the relation vector toward zero and making it indistinguishable from other near-zero relations.</div>
+</div>
+
+<div class="quiz">
+  <p class="quiz-question">2. What's the essential change that lets ComplEx model antisymmetric relations, unlike DistMult?</p>
+  <ul class="quiz-options">
+    <li data-correct="true">ComplEx uses complex-valued embeddings with a conjugate operation</li>
+    <li data-correct="false">ComplEx uses larger embeddings with more training data</li>
+    <li data-correct="false">ComplEx uses graph convolutions with additional attention layers</li>
+    <li data-correct="false">ComplEx uses random negative sampling with harder examples</li>
+  </ul>
+  <div class="quiz-explanation">DistMult's bilinear score is symmetric in h and t, so it can never separate a true triple from its reversed form. ComplEx embeds in complex space and conjugates the tail embedding, which breaks that symmetry and lets the model score (A, parent_of, B) differently from (B, parent_of, A).</div>
+</div>
+
+<div class="quiz">
+  <p class="quiz-question">3. In knowledge graph completion, what does the trained scoring function let us do?</p>
+  <ul class="quiz-options">
+    <li data-correct="true">Rank candidate tail entities for a triple</li>
+    <li data-correct="false">Rank candidate node degrees for a graph</li>
+    <li data-correct="false">Rank candidate edge counts for a batch</li>
+    <li data-correct="false">Rank candidate loss values for a model</li>
+  </ul>
+  <div class="quiz-explanation">Given a partial triple (h, r, ?), the scoring function is evaluated against every candidate entity as the tail, and the candidates are ranked by score. High-ranked, unseen triples are the model's proposed missing facts.</div>
+</div>
+
+<h2>Primary source</h2>
+
+<div class="source-link">
+  Read: Hamilton, <a href="https://www.cs.mcgill.ca/~wlh/grl_book/" target="_blank">"Graph Representation Learning"</a>, <strong>Chapter 4</strong> (relational data and knowledge graph embeddings), plus Stanford <a href="https://cs224w.stanford.edu/" target="_blank">CS224W Lecture 10</a>. For the primary sources on the three methods themselves: Bordes et al., <a href="https://papers.nips.cc/paper/5071-translating-embeddings-for-modeling-multi-relational-data" target="_blank">"Translating Embeddings for Modeling Multi-relational Data"</a> (TransE, NeurIPS 2013); Yang et al., <a href="https://arxiv.org/abs/1412.6575" target="_blank">"Embedding Entities and Relations for Learning and Inference in Knowledge Bases"</a> (DistMult, 2015); Trouillon et al., <a href="https://arxiv.org/abs/1606.06357" target="_blank">"Complex Embeddings for Simple Link Prediction"</a> (ComplEx, 2016).
+</div>
+
+<div class="followup">
+  Questions about anything in this lesson? Ask your teacher &mdash; run <code>/teach</code> and ask about whatever is unclear. Next up: <strong>Lesson 20 &mdash; Dynamic and Temporal GNNs</strong>, where the graph itself stops being a static object and starts changing over time &mdash; the setting that matters most for your AML/fraud interest.
+</div>
+
+<div class="nav-links">
+  <a href="0018-heterogeneous-graphs.html">&larr; Lesson 18: Heterogeneous Graphs</a>
+  <a href="0020-dynamic-and-temporal-gnns.html">Lesson 20: Dynamic and Temporal GNNs &rarr;</a>
+</div>
+
+</body>
+</html>

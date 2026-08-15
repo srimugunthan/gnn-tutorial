@@ -1,0 +1,198 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Lesson 12: Readout and Pooling for Graph-Level Tasks</title>
+  <link rel="stylesheet" href="../assets/style.css">
+  <script src="../assets/quiz.js"></script>
+</head>
+<body>
+
+<div class="lesson-number">Lesson 12</div>
+<h1>Readout and Pooling for Graph-Level Tasks</h1>
+
+<p>After L rounds of message passing, every node v holds an embedding h<sub>v</sub><sup>(L)</sup> that summarizes its L-hop receptive field. For node- and edge-level tasks, that's the whole story: feed h<sub>v</sub> (or a pair h<sub>u</sub>, h<sub>v</sub>) straight into an output head. But a graph-level task &mdash; is this molecule toxic? will this transaction network be flagged? &mdash; needs exactly <em>one</em> vector per graph. Lesson 1 promised "we'll cover this in a later lesson." This is that lesson.</p>
+
+<h2>From a set of nodes to a graph</h2>
+
+<p><strong>Readout</strong> (also called graph pooling) is a function that maps the set of final node embeddings {h<sub>v</sub> : v &isin; V} to a single vector h<sub>G</sub>. It has one hard requirement, and it isn't new: h<sub>G</sub> must be <strong>permutation invariant</strong>, not merely equivariant. A graph has no canonical node order (Lesson 1, Lesson 4), so relabeling the nodes and re-running readout must produce the identical h<sub>G</sub> &mdash; not a permuted version of it, the <em>same</em> vector. Every option below is built to satisfy that constraint by construction: they all treat {h<sub>v</sub>} as an unordered multiset.</p>
+
+<h2>Simple readout: sum, mean, max</h2>
+
+<p>The three workhorse readouts, each applied dimension-by-dimension across all nodes in the graph:</p>
+
+<ul>
+  <li><strong>Sum:</strong> h<sub>G</sub> = &sum;<sub>v&isin;V</sub> h<sub>v</sub></li>
+  <li><strong>Mean:</strong> h<sub>G</sub> = (1/|V|) &sum;<sub>v&isin;V</sub> h<sub>v</sub></li>
+  <li><strong>Max:</strong> h<sub>G</sub> = elementwise max<sub>v&isin;V</sub> h<sub>v</sub></li>
+</ul>
+
+<figure>
+  <svg viewBox="0 0 380 200" width="380" xmlns="http://www.w3.org/2000/svg">
+    <circle cx="40" cy="30" r="16" fill="#d8f3dc" stroke="#2d6a4f" stroke-width="2"/>
+    <text x="40" y="35" text-anchor="middle" font-size="12" font-family="Georgia, serif">h<tspan baseline-shift="sub" font-size="8">A</tspan></text>
+    <circle cx="40" cy="80" r="16" fill="#d8f3dc" stroke="#2d6a4f" stroke-width="2"/>
+    <text x="40" y="85" text-anchor="middle" font-size="12" font-family="Georgia, serif">h<tspan baseline-shift="sub" font-size="8">B</tspan></text>
+    <circle cx="40" cy="130" r="16" fill="#d8f3dc" stroke="#2d6a4f" stroke-width="2"/>
+    <text x="40" y="135" text-anchor="middle" font-size="12" font-family="Georgia, serif">h<tspan baseline-shift="sub" font-size="8">C</tspan></text>
+    <circle cx="40" cy="180" r="16" fill="#d8f3dc" stroke="#2d6a4f" stroke-width="2"/>
+    <text x="40" y="185" text-anchor="middle" font-size="12" font-family="Georgia, serif">h<tspan baseline-shift="sub" font-size="8">D</tspan></text>
+
+    <line x1="58" y1="30" x2="150" y2="95" stroke="#6c757d" stroke-width="1.5"/>
+    <line x1="58" y1="80" x2="150" y2="100" stroke="#6c757d" stroke-width="1.5"/>
+    <line x1="58" y1="130" x2="150" y2="105" stroke="#6c757d" stroke-width="1.5"/>
+    <line x1="58" y1="180" x2="150" y2="110" stroke="#6c757d" stroke-width="1.5"/>
+
+    <rect x="150" y="75" width="110" height="50" rx="6" fill="#fff3cd" stroke="#ffc107" stroke-width="2"/>
+    <text x="205" y="96" text-anchor="middle" font-size="11" font-family="Georgia, serif">READOUT</text>
+    <text x="205" y="112" text-anchor="middle" font-size="10" font-family="Georgia, serif">(&Sigma;, mean, or max)</text>
+
+    <line x1="260" y1="100" x2="310" y2="100" stroke="#6c757d" stroke-width="1.5"/>
+    <polygon points="310,100 300,95 300,105" fill="#6c757d"/>
+
+    <circle cx="335" cy="100" r="20" fill="#c9e4ff" stroke="#1971c2" stroke-width="2"/>
+    <text x="335" y="105" text-anchor="middle" font-size="12" font-family="Georgia, serif">h<tspan baseline-shift="sub" font-size="8">G</tspan></text>
+  </svg>
+  <figcaption>Four per-node embeddings collapse into one permutation-invariant graph embedding.</figcaption>
+</figure>
+
+<p>All three are cheap, differentiable, and add zero parameters. But they aren't interchangeable:</p>
+
+<ul>
+  <li><strong>Sum</strong> is sensitive to |V|: a graph with twice as many nodes of the same "type" produces roughly twice the magnitude. That's a feature, not a bug, when graph size itself is informative (a bigger molecule has more atoms to be toxic with).</li>
+  <li><strong>Mean</strong> normalizes size out. Useful when you care about the average composition of a graph regardless of how big it is, but it can wash out the signal from a small number of decisive nodes in a large graph.</li>
+  <li><strong>Max</strong> keeps only the single most extreme value per feature dimension across all nodes &mdash; good for "does this graph contain a motif with property X anywhere," bad if the task needs a holistic profile rather than a peak.</li>
+</ul>
+
+<div class="key-idea">
+  <strong>Key idea:</strong> The GIN paper (Lesson 10) makes this precise: under mild conditions, <strong>sum</strong> is the only one of the three that is <em>injective</em> over multisets of node embeddings &mdash; two different multisets are (almost) guaranteed to sum to different vectors, while mean and max can collide on genuinely different inputs. That's exactly why GIN pairs a sum-aggregator in its message-passing step with a sum-readout at the graph level: injectivity all the way through is what lets GIN match the Weisfeiler-Leman test's discriminative power (more on this in Lesson 15).
+</div>
+
+<p>In practice, readout has to cooperate with batching (Lesson 2): a batch is one big disjoint-union graph plus a <code>batch</code> vector recording which original graph each node belongs to. Readout becomes a <em>scatter</em> operation &mdash; sum/mean/max each node's embedding into the slot given by its batch index, producing one h<sub>G</sub> per graph in the batch in a single pass. This is exactly what PyTorch Geometric's <code>global_add_pool</code>, <code>global_mean_pool</code>, and <code>global_max_pool</code> do under the hood.</p>
+
+<h2>Where flat readout falls short</h2>
+
+<p>All three simple readouts treat the final-layer embeddings as an unstructured bag: every node contributes to h<sub>G</sub> exactly once, exactly the same way, regardless of where it sits in the graph. But many real graphs have structure <em>above</em> the node level &mdash; a molecule is built from functional groups, a social network from communities, a fraud ring from tightly-connected clusters loosely linked to the rest of the account graph. A single flat pooling step at the very end has no way to represent "these fifteen nodes form one unit, and that unit relates to these other units."</p>
+
+<h2>Hierarchical pooling: DiffPool</h2>
+
+<p><strong>DiffPool</strong> (Ying, You, Morris, Ren, Hamilton &amp; Leskovec, <a href="https://arxiv.org/abs/1806.08804" target="_blank">"Hierarchical Graph Representation Learning with Differentiable Pooling"</a>, NeurIPS 2018) takes the CNN analogy from Lesson 1 further: instead of pooling once at the end, coarsen the graph progressively across several layers, the way a CNN shrinks spatial resolution with each pooling layer.</p>
+
+<p>At each pooling layer l, two GNNs run in parallel over the current (already-coarsened) graph:</p>
+
+<ul>
+  <li>One produces ordinary node embeddings Z<sup>(l)</sup>, same as any message-passing layer.</li>
+  <li>The other produces a <strong>soft cluster-assignment matrix</strong> S<sup>(l)</sup> &isin; &Ropf;<sup>n<sub>l</sub> &times; n<sub>l+1</sub></sup> &mdash; each row softmax-normalized, so every node gets a distribution over the next layer's (smaller number of) clusters, rather than a hard 0/1 assignment.</li>
+</ul>
+
+<p>The graph is then coarsened using both: X<sup>(l+1)</sup> = S<sup>(l)&top;</sup>Z<sup>(l)</sup> (each new cluster's features are a weighted sum of its member nodes' embeddings), and A<sup>(l+1)</sup> = S<sup>(l)&top;</sup>A<sup>(l)</sup>S<sup>(l)</sup> (each new cluster-to-cluster edge weight is aggregated from the edges between their members). Repeat for a handful of layers until only one cluster remains &mdash; that final vector <em>is</em> h<sub>G</sub>, no separate readout call needed.</p>
+
+<figure>
+  <svg viewBox="0 0 340 300" width="340" xmlns="http://www.w3.org/2000/svg">
+    <circle cx="45" cy="30" r="10" fill="#d8f3dc" stroke="#2d6a4f" stroke-width="2"/>
+    <circle cx="80" cy="20" r="10" fill="#d8f3dc" stroke="#2d6a4f" stroke-width="2"/>
+    <circle cx="65" cy="55" r="10" fill="#d8f3dc" stroke="#2d6a4f" stroke-width="2"/>
+    <line x1="45" y1="30" x2="80" y2="20" stroke="#2d6a4f" stroke-width="1.5"/>
+    <line x1="45" y1="30" x2="65" y2="55" stroke="#2d6a4f" stroke-width="1.5"/>
+    <line x1="80" y1="20" x2="65" y2="55" stroke="#2d6a4f" stroke-width="1.5"/>
+
+    <circle cx="255" cy="30" r="10" fill="#c9e4ff" stroke="#1971c2" stroke-width="2"/>
+    <circle cx="290" cy="20" r="10" fill="#c9e4ff" stroke="#1971c2" stroke-width="2"/>
+    <circle cx="275" cy="55" r="10" fill="#c9e4ff" stroke="#1971c2" stroke-width="2"/>
+    <line x1="255" y1="30" x2="290" y2="20" stroke="#1971c2" stroke-width="1.5"/>
+    <line x1="255" y1="30" x2="275" y2="55" stroke="#1971c2" stroke-width="1.5"/>
+    <line x1="290" y1="20" x2="275" y2="55" stroke="#1971c2" stroke-width="1.5"/>
+
+    <line x1="65" y1="55" x2="255" y2="30" stroke="#adb5bd" stroke-width="1" stroke-dasharray="3,3"/>
+
+    <text x="170" y="45" text-anchor="middle" font-size="10" fill="#6c757d" font-family="Georgia, serif">level 0: original graph</text>
+
+    <line x1="65" y1="70" x2="90" y2="130" stroke="#6c757d" stroke-width="1.5"/>
+    <polygon points="90,130 84,118 96,120" fill="#6c757d"/>
+    <line x1="275" y1="70" x2="250" y2="130" stroke="#6c757d" stroke-width="1.5"/>
+    <polygon points="250,130 254,118 242,122" fill="#6c757d"/>
+
+    <circle cx="100" cy="150" r="22" fill="#d8f3dc" stroke="#2d6a4f" stroke-width="2"/>
+    <text x="100" y="155" text-anchor="middle" font-size="11" font-family="Georgia, serif">S&#8321;</text>
+    <circle cx="240" cy="150" r="22" fill="#c9e4ff" stroke="#1971c2" stroke-width="2"/>
+    <text x="240" y="155" text-anchor="middle" font-size="11" font-family="Georgia, serif">S&#8322;</text>
+    <line x1="122" y1="150" x2="218" y2="150" stroke="#adb5bd" stroke-width="1.5"/>
+
+    <text x="170" y="195" text-anchor="middle" font-size="10" fill="#6c757d" font-family="Georgia, serif">level 1: 2 clusters</text>
+
+    <line x1="120" y1="205" x2="155" y2="245" stroke="#6c757d" stroke-width="1.5"/>
+    <polygon points="155,245 148,234 160,236" fill="#6c757d"/>
+    <line x1="220" y1="205" x2="185" y2="245" stroke="#6c757d" stroke-width="1.5"/>
+    <polygon points="185,245 192,234 180,236" fill="#6c757d"/>
+
+    <circle cx="170" cy="265" r="26" fill="#fff3cd" stroke="#ffc107" stroke-width="2"/>
+    <text x="170" y="270" text-anchor="middle" font-size="13" font-family="Georgia, serif">h<tspan baseline-shift="sub" font-size="9">G</tspan></text>
+
+    <text x="170" y="300" text-anchor="middle" font-size="10" fill="#6c757d" font-family="Georgia, serif">level 2: 1 cluster = graph embedding</text>
+  </svg>
+  <figcaption>DiffPool coarsens the graph across layers instead of pooling flat in one step. Learned soft assignments (S<sub>1</sub>, S<sub>2</sub>) decide which nodes merge into which cluster.</figcaption>
+</figure>
+
+<div class="key-idea">
+  <strong>Key idea:</strong> DiffPool is trained <em>end-to-end</em> with the rest of the network via ordinary backprop &mdash; the cluster assignments are learned jointly with everything else, not computed by a separate graph-clustering algorithm (e.g. spectral clustering) run as a preprocessing step. In practice it's trained with two auxiliary terms: a link-prediction-style reconstruction loss (encouraging S<sup>(l)</sup>S<sup>(l)&top;</sup> to resemble the real adjacency A<sup>(l)</sup>, so clusters respect actual connectivity) and an entropy regularizer (pushing each row of S<sup>(l)</sup> toward one-hot, so assignments stay interpretable rather than diffuse).
+</div>
+
+<div class="analogy">
+  <strong>Analogy:</strong> DiffPool's learned cluster assignment does for graphs what a strided pooling layer does for a CNN feature map &mdash; shrinking the representation while keeping locally-salient structure. The difference is that a CNN's pooling windows are handed to it for free by the fixed grid; DiffPool has to <em>learn</em> which nodes belong together, because graphs don't come with a fixed neighborhood shape to slide a window over.
+</div>
+
+<p>DiffPool isn't the only hierarchical option &mdash; lighter-weight alternatives like top-k / SAGPool score each node with a learned function and simply drop the lowest-scoring fraction, avoiding the dense S<sup>(l)</sup>S<sup>(l)&top;</sup> computation. The soft-assignment idea above is the one worth having internalized, though: it's the "next level up" from flat readout that the rest of the literature riffs on.</p>
+
+<h2>Check your understanding</h2>
+
+<div class="quiz">
+  <p class="quiz-question">1. GIN's authors argue that one readout function is best able to distinguish graphs that differ only in node count (multiset cardinality), because it isn't normalized by node count. Which one?</p>
+  <ul class="quiz-options">
+    <li data-correct="true">Sum pooling</li>
+    <li data-correct="false">Mean pooling</li>
+    <li data-correct="false">Max pooling</li>
+    <li data-correct="false">Softmax pooling</li>
+  </ul>
+  <div class="quiz-explanation">Sum scales with |V|, so it's sensitive to node count. Mean explicitly normalizes count out, and max keeps only one extreme value regardless of how many nodes produced it &mdash; both lose count information that sum preserves.</div>
+</div>
+
+<div class="quiz">
+  <p class="quiz-question">2. What problem does DiffPool address that flat sum/mean/max readout does not?</p>
+  <ul class="quiz-options">
+    <li data-correct="true">It captures the graph's community structure</li>
+    <li data-correct="false">It captures the graph's node features</li>
+    <li data-correct="false">It captures the graph's edge weights</li>
+    <li data-correct="false">It captures the graph's degree sequence</li>
+  </ul>
+  <div class="quiz-explanation">Flat readout already operates on node embeddings (which encode features and, indirectly, local structure) &mdash; what it can't represent is that groups of nodes form higher-level units. DiffPool learns soft cluster assignments across several coarsening layers to capture exactly that hierarchical/community structure.</div>
+</div>
+
+<div class="quiz">
+  <p class="quiz-question">3. During graph batching, what tells the readout step which nodes belong to which original graph?</p>
+  <ul class="quiz-options">
+    <li data-correct="false">The node feature matrix</li>
+    <li data-correct="false">The edge index tensor</li>
+    <li data-correct="true">The batch index vector</li>
+    <li data-correct="false">The dense adjacency matrix</li>
+  </ul>
+  <div class="quiz-explanation">Batching (Lesson 2) disjoint-unions the graphs and keeps a separate batch vector recording each node's source graph. Readout uses that vector to scatter-sum/mean/max nodes into the correct per-graph slot, since the node and edge tensors alone don't carry graph membership.</div>
+</div>
+
+<h2>Primary source</h2>
+
+<div class="source-link">
+  Read: <a href="https://www.cs.mcgill.ca/~wlh/grl_book/" target="_blank">"Graph Representation Learning"</a> by William L. Hamilton, <strong>Chapter 6</strong>, for the formal treatment of graph-level readouts and pooling. Then: <a href="https://arxiv.org/abs/1806.08804" target="_blank">"Hierarchical Graph Representation Learning with Differentiable Pooling"</a> by Ying, You, Morris, Ren, Hamilton &amp; Leskovec (NeurIPS 2018) for DiffPool itself &mdash; the coarsening figures in the paper are worth studying directly.
+</div>
+
+<div class="followup">
+  Questions about anything in this lesson? Ask your teacher &mdash; run <code>/teach</code> and ask about whatever is unclear. Next up: <strong>Lesson 13 &mdash; Loss Functions and Training Strategies</strong>, where we'll look at the graph-specific gotchas in the training pipeline itself: transductive splits, edge leakage, and negative sampling.
+</div>
+
+<div class="nav-links">
+  <a href="0011-architecture-comparison.html">&larr; Lesson 11: Architecture Comparison</a>
+  <a href="0013-loss-functions-and-training-strategies.html">Lesson 13: Loss Functions and Training Strategies &rarr;</a>
+</div>
+
+</body>
+</html>

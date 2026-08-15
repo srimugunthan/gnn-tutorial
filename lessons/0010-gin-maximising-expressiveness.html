@@ -1,0 +1,142 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Lesson 10: GIN: Maximising Expressiveness</title>
+  <link rel="stylesheet" href="../assets/style.css">
+  <script src="../assets/quiz.js"></script>
+</head>
+<body>
+
+<div class="lesson-number">Lesson 10</div>
+<h1>GIN: Maximising Expressiveness</h1>
+
+<p>GCN, GraphSAGE, and GAT were each motivated by a practical concern &mdash; tractability, scalability, content-sensitivity. The <strong>Graph Isomorphism Network (GIN)</strong>, from Xu et al. (2019), asks a more theoretical question that turns out to have sharp practical consequences: <em>how much can a message-passing GNN, of any design, actually tell apart?</em> The answer reshapes how you should think about every architecture in this module &mdash; including the three you've just learned.</p>
+
+<h2>The limitation it solves: mean and max aggregation aren't injective</h2>
+
+<p>Every aggregator you've seen so far &mdash; GCN's normalized weighted sum, GraphSAGE's mean or max-pool, GAT's attention-weighted sum &mdash; compresses a <em>multiset</em> of neighbor feature vectors down to one vector. The question GIN's authors ask is: does that compression preserve enough information to tell different neighborhoods apart? For mean and max, the answer is provably no, in ways that don't depend on how big or well-trained the rest of the network is.</p>
+
+<p>Two small examples make this concrete. Consider a node whose neighbors all share the same feature value 1, but the <em>count</em> of neighbors differs:</p>
+
+<table style="width:100%; border-collapse:collapse; margin:1rem 0; font-size:0.9rem;">
+  <thead>
+    <tr style="border-bottom:2px solid var(--border); text-align:left;">
+      <th style="padding:0.5rem;">Neighbor multiset</th>
+      <th style="padding:0.5rem;">mean</th>
+      <th style="padding:0.5rem;">max</th>
+      <th style="padding:0.5rem;">sum</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr style="border-bottom:1px solid var(--border);">
+      <td style="padding:0.5rem;">{1, 1}</td>
+      <td style="padding:0.5rem;">1</td>
+      <td style="padding:0.5rem;">1</td>
+      <td style="padding:0.5rem;">2</td>
+    </tr>
+    <tr>
+      <td style="padding:0.5rem;">{1, 1, 1}</td>
+      <td style="padding:0.5rem;">1</td>
+      <td style="padding:0.5rem;">1</td>
+      <td style="padding:0.5rem;">3</td>
+    </tr>
+  </tbody>
+</table>
+
+<p>Mean and max produce <em>identical</em> outputs for a node with 2 identical neighbors and a node with 3 identical neighbors &mdash; that structural difference is simply gone before it ever reaches the update function. Sum preserves it. A second example shows mean can also erase a difference in the neighbor <em>distribution</em>, not just the count: {1, 2} and {1, 1, 2, 2} both have mean 1.5, but sum gives 3 versus 6.</p>
+
+<div class="key-idea">
+  <strong>Key idea:</strong> Once an aggregator merges two different multisets into the same output, no amount of depth, width, or training in the layers that follow can ever recover the distinction &mdash; the information is destroyed at the aggregation step, not merely obscured. This is why aggregator choice is a hard ceiling on expressiveness, not just a design preference.
+</div>
+
+<h2>The core mechanism: sum aggregation, self-weighting, and an MLP</h2>
+
+<p>GIN's fix is to use sum aggregation &mdash; which the theory shows is capable of injectively encoding multisets under the right conditions &mdash; combined with a learnable weighting of the self-term and a multi-layer perceptron in place of the usual single linear transform + nonlinearity:</p>
+
+<div class="key-idea">
+  <strong>GIN update rule:</strong><br>
+  h<sub>v</sub><sup>(k)</sup> = MLP<sup>(k)</sup>( (1 + &epsilon;<sup>(k)</sup>) &middot; h<sub>v</sub><sup>(k&minus;1)</sup> + &Sigma;<sub>u&isin;N(v)</sub> h<sub>u</sub><sup>(k&minus;1)</sup> )<br><br>
+  where &epsilon;<sup>(k)</sup> is a scalar (learnable or fixed) that weighs the node's own previous representation relative to its summed neighbors, and MLP<sup>(k)</sup> is a small multi-layer perceptron, not just a single linear layer + &sigma;.
+</div>
+
+<p>Compare this to GCN's self-loop: GCN folds the self-term into the same normalized sum as every neighbor, with a weight fixed by degree. GIN instead gives the self-term its own tunable coefficient (1+&epsilon;), separate from the neighbor sum &mdash; a more flexible, GAT-like idea of "how much should I weigh myself," but expressed as a single scalar rather than a full attention distribution.</p>
+
+<p>Why an MLP instead of one linear layer? Because the theoretical claim requires being able to approximate <em>any</em> injective function over multisets, and a single linear layer followed by a fixed nonlinearity isn't expressive enough to guarantee that; a multi-layer perceptron, by the universal approximation theorem, is.</p>
+
+<h2>What's new: matching the Weisfeiler-Leman test</h2>
+
+<p>This is GIN's central theoretical result. The <strong>Weisfeiler-Leman (WL) test</strong> is a classical, purely combinatorial algorithm for graph isomorphism testing: every node starts with a color, and at each round, a node's color is re-hashed based on the <em>multiset</em> of its neighbors' colors. Two graphs are judged possibly-isomorphic if their final color histograms match after enough rounds; if the histograms differ, the graphs are provably non-isomorphic.</p>
+
+<p>Message passing and the WL test have the same shape: both repeatedly recompute a node's state from a hashed/aggregated summary of its neighbors' states. Xu et al. prove two things:</p>
+
+<ul>
+  <li><strong>The WL test is an upper bound.</strong> No message-passing GNN, regardless of architecture, can distinguish two graphs that the WL test cannot distinguish.</li>
+  <li><strong>GIN reaches that bound.</strong> If the aggregation and update functions are injective (which sum + MLP can be, but mean/max cannot), the resulting GNN is exactly as powerful as the WL test at telling graphs apart.</li>
+</ul>
+
+<div class="analogy">
+  <strong>Analogy:</strong> The WL test's color-hashing step is doing exactly what a message-passing layer does &mdash; summarize a neighborhood into a new label. GIN is, in effect, a WL test where the hand-designed "hash function" has been replaced by a learned, differentiable one (the MLP), trained end-to-end for the task instead of hand-built for isomorphism testing alone.
+</div>
+
+<h2>What this says about limitations, not just power</h2>
+
+<p>"As powerful as WL" is a ceiling, not just a floor. It implies that GIN &mdash; and by the bound above, <em>every</em> standard message-passing GNN, including GCN, GraphSAGE, and GAT &mdash; inherits the WL test's blind spots. There exist pairs of non-isomorphic graphs (for instance, certain pairs of regular graphs with matching degree sequences but different global structure) that WL cannot tell apart, and so no amount of extra layers, wider hidden dimensions, or more training data will let any of these architectures tell them apart either. We'll formalize this hierarchy in Lesson 15.</p>
+
+<h2>Where GIN fits: transductive, inductive, and readout</h2>
+
+<p>Like GraphSAGE and GAT, GIN's learned parameters (the MLPs and &epsilon;'s) are shared functions applied locally at every node, independent of a specific fixed graph &mdash; so it's inductive by construction in the same sense. In practice, GIN is almost always used for <strong>graph-level</strong> tasks (its motivating benchmarks are graph classification datasets), where every graph in the dataset is a separate training example and the model must generalize across graphs by design. Because sum aggregation is exactly what preserves multiset information, GIN also typically uses a <em>sum</em>-based readout to pool node embeddings into a graph-level representation &mdash; the same expressiveness argument applies one level up, a point we'll pick up in Lesson 12.</p>
+
+<h2>Check your understanding</h2>
+
+<div class="quiz">
+  <p class="quiz-question">1. Why can a GNN using mean aggregation fail to distinguish a node with two identical-feature neighbors from one with three identical-feature neighbors?</p>
+  <ul class="quiz-options">
+    <li data-correct="true">Mean normalizes by size, losing exact neighbor count</li>
+    <li data-correct="false">Sum normalizes by size, losing exact neighbor count</li>
+    <li data-correct="false">Max normalizes by size, losing exact neighbor count</li>
+    <li data-correct="false">Mean normalizes by count, losing exact neighbor size</li>
+  </ul>
+  <div class="quiz-explanation">Mean divides the sum by the number of neighbors, so two neighborhoods with the same repeated value but different sizes produce the same average &mdash; the count information is destroyed at the aggregation step, before any later layer can recover it.</div>
+</div>
+
+<div class="quiz">
+  <p class="quiz-question">2. According to Xu et al., what is the theoretical ceiling on how expressive any standard message-passing GNN can be at distinguishing non-isomorphic graphs?</p>
+  <ul class="quiz-options">
+    <li data-correct="true">The Weisfeiler-Leman graph isomorphism test</li>
+    <li data-correct="false">The spectral graph Laplacian eigendecomposition</li>
+    <li data-correct="false">The random walk transition matrix</li>
+    <li data-correct="false">The graph edit distance metric</li>
+  </ul>
+  <div class="quiz-explanation">Xu et al. prove that no message-passing GNN can distinguish two graphs the WL test cannot distinguish, and that GIN, with injective aggregation and update functions, achieves that same upper bound &mdash; making it exactly as powerful as WL, no more.</div>
+</div>
+
+<div class="quiz">
+  <p class="quiz-question">3. What role does GIN's learnable epsilon play in the update rule?</p>
+  <ul class="quiz-options">
+    <li data-correct="true">It weighs a node's own previous representation</li>
+    <li data-correct="false">It weighs each neighbor's own attention score</li>
+    <li data-correct="false">It weighs the total number of layers</li>
+    <li data-correct="false">It weighs the graph's overall readout vector</li>
+  </ul>
+  <div class="quiz-explanation">Epsilon scales the (1+&epsilon;)&middot;h_v term &mdash; the node's own previous representation &mdash; relative to the summed neighbor contributions, before the whole thing is passed through the MLP. It plays a role similar to GCN's self-loop, but as a separate, tunable coefficient rather than a fixed, shared normalization weight.</div>
+</div>
+
+<h2>Primary source</h2>
+
+<div class="source-link">
+  Read: Xu et al., <a href="https://arxiv.org/abs/1810.00826" target="_blank">"How Powerful are Graph Neural Networks?"</a> (2019). Focus on <strong>Section 3</strong> (the WL-equivalence theorems) and <strong>Section 4.1</strong> (the GIN architecture and the sum-vs-mean-vs-max comparison, illustrated in the paper's Figure&nbsp;2&ndash;3).
+</div>
+
+<div class="followup">
+  Questions about anything in this lesson? Ask your teacher &mdash; run <code>/teach</code> and ask about whatever is unclear. Next up: <strong>Lesson 11 &mdash; Architecture Comparison</strong>, where we put GCN, GraphSAGE, GAT, and GIN side by side and build a decision framework for choosing between them.
+</div>
+
+<div class="nav-links">
+  <a href="0009-gat-attention-on-graphs.html">&larr; Lesson 9: GAT</a>
+  <a href="0011-architecture-comparison.html">Lesson 11: Architecture Comparison &rarr;</a>
+</div>
+
+</body>
+</html>

@@ -1,0 +1,165 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Lesson 17: Graph Transformers</title>
+  <link rel="stylesheet" href="../assets/style.css">
+  <script src="../assets/quiz.js"></script>
+</head>
+<body>
+
+<div class="lesson-number">Lesson 17</div>
+<h1>Graph Transformers</h1>
+
+<p>Lesson 16 placed the Transformer on the geometric map as a GNN operating on the complete graph &mdash; every token attends to every other token, with no structural bias at all. That placement raises the obvious question: if a Transformer already generalizes over an arbitrary set with full attention, why not just run it directly on a graph's nodes and let attention learn whatever structure matters? This lesson works through why that naive move fails, what has to be added back, and how the resulting <strong>graph transformers</strong> trade off against the message-passing GNNs you already know.</p>
+
+<h2>What plain self-attention throws away</h2>
+
+<p>Feed a graph's node features into a standard Transformer layer with no further changes, and every node attends to every other node with weights computed purely from feature similarity &mdash; the edge set <code>edge_index</code> never enters the computation. The result is provably weaker than message passing, not just structurally naive: a self-attention layer over a bag of node features, with no positional or structural information attached, is a permutation-equivariant function of the node <em>set</em> alone. It cannot tell a densely-connected graph from an empty one if the node features are the same, because it has no mechanism to look at the edges at all. Formally, "naked" graph transformers of this kind collapse to the same expressive class as DeepSets-style set functions &mdash; strictly weaker than 1-WL, and therefore weaker than even a single GCN layer.</p>
+
+<div class="key-idea">
+  <strong>Key idea:</strong> Full attention is permutation-equivariant over a <em>set</em>, but a graph is a set plus a structure. Dropping the structure isn't a simplification &mdash; it's a strictly weaker model than message passing, until something puts the edges back in.
+</div>
+
+<h2>Putting structure back: positional and structural encodings</h2>
+
+<p>The fix mirrors how vision and language Transformers handle their own domains: attach extra features to each node that encode where it sits in the graph, then let attention use them. Two schemes dominate:</p>
+
+<ul>
+  <li><strong>Laplacian eigenvector positional encoding.</strong> Compute the graph Laplacian (built from the adjacency and degree matrices) and take its lowest few eigenvectors as extra coordinates for each node. These generalize the sinusoidal positional encodings of sequence Transformers &mdash; on a chain graph, the Laplacian's eigenvectors literally <em>are</em> sinusoids &mdash; and capture <em>global</em> structural position: nodes in different parts of the graph get different coordinates even if their local neighborhoods look identical.</li>
+  <li><strong>Random-walk positional encoding (RWPE).</strong> For each node, record the probability that a k-step random walk started at that node returns to itself, for a range of step counts. This is cheaper to compute than an eigendecomposition and captures more <em>local</em> structural role &mdash; how tightly clustered a node's neighborhood is &mdash; rather than global position.</li>
+</ul>
+
+<p>With either encoding concatenated onto the node features, attention weights can now be a function of graph structure, not just raw feature similarity &mdash; the encodings are what let a node "know" the shape of the graph around it before attention ever runs.</p>
+
+<h2>The GraphGPS recipe: message passing + attention, per layer</h2>
+
+<p>Rather than choosing between local message passing and global attention, Rampášek et al.'s GraphGPS framework (2022) runs both in every layer: a standard sparse message-passing block (any of GCN/GAT/GraphSAGE/GIN-style updates) alongside a global attention block, with their outputs combined before the next layer. Positional and structural encodings are computed once up front and fed to both blocks. The result is a modular "recipe" rather than one fixed architecture &mdash; swap in whichever message-passing layer and whichever efficient attention variant suits the task.</p>
+
+<div class="analogy">
+  <strong>Analogy:</strong> This is the same move as a Vision Transformer patchifying an image and adding positional embeddings before running full attention &mdash; ViT throws away the CNN's built-in locality prior and re-derives useful structure from data plus explicit position information instead. Graph transformers make the identical trade for graphs: give up hard-wired locality, buy it back (partially) with positional/structural encodings and, in hybrid designs like GraphGPS, a parallel message-passing path.
+</div>
+
+<h2>Trade-offs against message-passing GNNs</h2>
+
+<figure>
+  <svg viewBox="0 0 440 190" width="440" xmlns="http://www.w3.org/2000/svg">
+    <text x="110" y="18" text-anchor="middle" font-size="12" font-family="Georgia, serif" font-weight="bold">Message passing: sparse</text>
+    <circle cx="110" cy="90" r="14" fill="#d8f3dc" stroke="#2d6a4f" stroke-width="2"/>
+    <circle cx="60" cy="50" r="12" fill="#d8f3dc" stroke="#2d6a4f" stroke-width="2"/>
+    <circle cx="160" cy="50" r="12" fill="#d8f3dc" stroke="#2d6a4f" stroke-width="2"/>
+    <circle cx="60" cy="130" r="12" fill="#d8f3dc" stroke="#2d6a4f" stroke-width="2"/>
+    <circle cx="160" cy="130" r="12" fill="#d8f3dc" stroke="#2d6a4f" stroke-width="2"/>
+    <line x1="110" y1="90" x2="60" y2="50" stroke="#1a1a2e" stroke-width="1.5"/>
+    <line x1="110" y1="90" x2="160" y2="50" stroke="#1a1a2e" stroke-width="1.5"/>
+    <line x1="110" y1="90" x2="60" y2="130" stroke="#1a1a2e" stroke-width="1.5"/>
+    <line x1="110" y1="90" x2="160" y2="130" stroke="#1a1a2e" stroke-width="1.5"/>
+    <text x="110" y="175" text-anchor="middle" font-size="10" font-family="Georgia, serif" fill="#495057">O(|E|) messages per layer</text>
+
+    <text x="335" y="18" text-anchor="middle" font-size="12" font-family="Georgia, serif" font-weight="bold">Full attention: dense</text>
+    <circle cx="335" cy="90" r="14" fill="#fff3cd" stroke="#e0a800" stroke-width="2"/>
+    <circle cx="285" cy="50" r="12" fill="#fff3cd" stroke="#e0a800" stroke-width="2"/>
+    <circle cx="385" cy="50" r="12" fill="#fff3cd" stroke="#e0a800" stroke-width="2"/>
+    <circle cx="285" cy="130" r="12" fill="#fff3cd" stroke="#e0a800" stroke-width="2"/>
+    <circle cx="385" cy="130" r="12" fill="#fff3cd" stroke="#e0a800" stroke-width="2"/>
+    <line x1="335" y1="90" x2="285" y2="50" stroke="#1a1a2e" stroke-width="1.5"/>
+    <line x1="335" y1="90" x2="385" y2="50" stroke="#1a1a2e" stroke-width="1.5"/>
+    <line x1="335" y1="90" x2="285" y2="130" stroke="#1a1a2e" stroke-width="1.5"/>
+    <line x1="335" y1="90" x2="385" y2="130" stroke="#1a1a2e" stroke-width="1.5"/>
+    <line x1="285" y1="50" x2="385" y2="50" stroke="#1a1a2e" stroke-width="1.5"/>
+    <line x1="285" y1="50" x2="285" y2="130" stroke="#1a1a2e" stroke-width="1.5"/>
+    <line x1="285" y1="50" x2="385" y2="130" stroke="#1a1a2e" stroke-width="1.5"/>
+    <line x1="385" y1="50" x2="285" y2="130" stroke="#1a1a2e" stroke-width="1.5"/>
+    <line x1="385" y1="50" x2="385" y2="130" stroke="#1a1a2e" stroke-width="1.5"/>
+    <line x1="285" y1="130" x2="385" y2="130" stroke="#1a1a2e" stroke-width="1.5"/>
+    <text x="335" y="175" text-anchor="middle" font-size="10" font-family="Georgia, serif" fill="#495057">O(n&sup2;) attention per layer</text>
+  </svg>
+  <figcaption>Message passing only routes information along existing edges; full graph attention connects every node pair regardless of the original edges, recovering a global receptive field at quadratic cost.</figcaption>
+</figure>
+
+<table style="width:100%; border-collapse:collapse; margin:1rem 0; font-size:0.9rem;">
+  <thead>
+    <tr style="border-bottom:2px solid var(--border); text-align:left;">
+      <th style="padding:0.5rem;">Message-passing GNN</th>
+      <th style="padding:0.5rem;">Graph transformer</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr style="border-bottom:1px solid var(--border);">
+      <td style="padding:0.5rem;">Receptive field grows one hop per layer (Lesson 5)</td>
+      <td style="padding:0.5rem;">Global receptive field from the first layer</td>
+    </tr>
+    <tr style="border-bottom:1px solid var(--border);">
+      <td style="padding:0.5rem;">Prone to over-smoothing and over-squashing with depth (Lesson 6)</td>
+      <td style="padding:0.5rem;">Sidesteps both &mdash; distant nodes exchange information in one step, not through a narrow multi-hop bottleneck</td>
+    </tr>
+    <tr style="border-bottom:1px solid var(--border);">
+      <td style="padding:0.5rem;">O(|E|) cost per layer &mdash; scales with sparsity</td>
+      <td style="padding:0.5rem;">O(n&sup2;) cost per layer for full attention; needs sparsification or linear-attention tricks to scale</td>
+    </tr>
+    <tr>
+      <td style="padding:0.5rem;">Locality is a hard architectural bias (only real edges matter)</td>
+      <td style="padding:0.5rem;">Locality is a soft hint from positional/structural encodings, not enforced</td>
+    </tr>
+  </tbody>
+</table>
+
+<p>"Over-squashing" here is the same bottleneck problem raised in Lesson 6's over-smoothing discussion, seen from a different angle: as a message-passing GNN gets deeper, information from a distant node has to travel through an exponentially growing set of paths and gets compressed into fixed-size vectors along the way, distorting long-range signals. A graph transformer's global attention doesn't need depth to reach far-away nodes, so it doesn't inherit that particular failure mode &mdash; at the price of losing the hard locality bias that made sparse message passing cheap and, for many tasks, a genuinely useful inductive bias rather than a limitation to route around.</p>
+
+<div class="key-idea">
+  <strong>Key idea:</strong> Graph transformers don't strictly dominate message-passing GNNs. They swap one set of failure modes (over-smoothing, over-squashing, limited receptive field) for another (quadratic cost, weaker locality bias, dependence on the quality of the positional/structural encoding). Which one wins is task- and graph-size-dependent &mdash; exactly the kind of judgment call the architecture-comparison framework from Lesson 11 should now extend to cover.
+</div>
+
+<h2>Check your understanding</h2>
+
+<div class="quiz">
+  <p class="quiz-question">1. Without any positional or structural encoding, what does a Transformer's self-attention over a node set effectively reduce to?</p>
+  <ul class="quiz-options">
+    <li data-correct="true">A permutation-equivariant function over sets</li>
+    <li data-correct="false">A permutation-equivariant function over grids</li>
+    <li data-correct="false">A permutation-equivariant function over paths</li>
+    <li data-correct="false">A permutation-equivariant function over trees</li>
+  </ul>
+  <div class="quiz-explanation">With no positional or structural information, attention weights depend only on feature similarity, not on the edge set. The resulting function is equivariant to permuting the node set but blind to graph structure &mdash; equivalent to a DeepSets-style set function, strictly weaker than 1-WL.</div>
+</div>
+
+<div class="quiz">
+  <p class="quiz-question">2. What is the main computational trade-off graph transformers make for a global receptive field from layer one?</p>
+  <ul class="quiz-options">
+    <li data-correct="true">Quadratic cost in node count</li>
+    <li data-correct="false">Quadratic cost in edge count</li>
+    <li data-correct="false">Quadratic cost in layer count</li>
+    <li data-correct="false">Quadratic cost in batch count</li>
+  </ul>
+  <div class="quiz-explanation">Full attention connects every pair of nodes, so a single layer costs O(n&sup2;) rather than the O(|E|) of sparse message passing &mdash; the price for reaching every node in one step instead of one hop per layer.</div>
+</div>
+
+<div class="quiz">
+  <p class="quiz-question">3. Why can graph transformers avoid the over-squashing that troubles deep message-passing GNNs?</p>
+  <ul class="quiz-options">
+    <li data-correct="true">Every node attends to all nodes</li>
+    <li data-correct="false">Every node attends to one neighbor</li>
+    <li data-correct="false">Every node attends to its cluster</li>
+    <li data-correct="false">Every node attends to a subset</li>
+  </ul>
+  <div class="quiz-explanation">Over-squashing comes from information having to travel through an exponentially growing, narrowing set of multi-hop paths as depth increases. Full attention lets any two nodes exchange information directly in a single layer, so there's no long path for that information to be squashed through.</div>
+</div>
+
+<h2>Primary source</h2>
+
+<div class="source-link">
+  Read: <a href="https://arxiv.org/abs/2205.12454" target="_blank">"Recipe for a General, Powerful, Scalable Graph Transformer"</a> by Rampášek et al. (2022) &mdash; the GraphGPS paper, for the hybrid message-passing-plus-attention recipe and its treatment of positional/structural encodings. For the broader landscape of graph transformer designs, see <a href="https://web.stanford.edu/class/cs224w/slides/08-graph-transformer1.pdf" target="_blank">Stanford CS224W Lecture 8</a>.
+</div>
+
+<div class="followup">
+  Questions about anything in this lesson? Ask your teacher &mdash; run <code>/teach</code> and ask about whatever is unclear. Next up: <strong>Lesson 18 &mdash; Heterogeneous Graphs</strong>, moving from theory back to a practical extension: graphs with multiple node and edge types.
+</div>
+
+<div class="nav-links">
+  <a href="0016-geometric-deep-learning-symmetry.html">&larr; Lesson 16: Geometric Deep Learning</a>
+  <a href="0018-heterogeneous-graphs.html">Lesson 18: Heterogeneous Graphs &rarr;</a>
+</div>
+
+</body>
+</html>

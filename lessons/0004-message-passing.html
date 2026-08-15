@@ -1,0 +1,175 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Lesson 4: Message Passing: How Nodes Talk to Neighbors</title>
+  <link rel="stylesheet" href="../assets/style.css">
+  <script src="../assets/quiz.js"></script>
+</head>
+<body>
+
+<div class="lesson-number">Lesson 4</div>
+<h1>Message Passing: How Nodes Talk to Neighbors</h1>
+
+<p>Lesson 3 treated "L message-passing layers" as a black box that turns raw features X into embeddings H. This lesson opens the box. Message passing is the single mechanism underneath essentially every GNN you'll meet in this course &mdash; GCN, GraphSAGE, GAT, GIN are all specific choices of the functions inside the same three-step loop. Understand this lesson well and the rest of the course is mostly "which flavor of these three functions did they pick."</p>
+
+<h2>The gather &rarr; aggregate &rarr; update loop</h2>
+
+<p>One message-passing layer updates every node's representation using its current neighbors' representations. For a node i with neighborhood N(i) (from the glossary), one layer does three things:</p>
+
+<ol>
+  <li><strong>Gather / message:</strong> for each neighbor j &isin; N(i), compute a message m<sub>j&rarr;i</sub> = MSG(h<sub>i</sub>, h<sub>j</sub>, e<sub>ij</sub>) &mdash; a function of the receiving node's own state, the sending neighbor's state, and (optionally) the edge feature between them.</li>
+  <li><strong>Aggregate:</strong> combine all incoming messages into one fixed-size vector: a<sub>i</sub> = AGG({m<sub>j&rarr;i</sub> : j &isin; N(i)}).</li>
+  <li><strong>Update:</strong> combine the aggregated message with the node's own previous state to produce its new state: h<sub>i</sub>' = UPD(h<sub>i</sub>, a<sub>i</sub>).</li>
+</ol>
+
+<p>Every node in the graph runs this same three-step recipe, in parallel, using the <em>same</em> learned MSG, AGG, and UPD functions (weight-sharing, just like a CNN kernel reused at every pixel). Stack L of these layers back to back and you get exactly the "L message-passing layers" box from Lesson 3.</p>
+
+<div class="key-idea">
+  <strong>Key idea:</strong> A message-passing layer is a local, weight-shared computation: it only ever looks at a node, its direct neighbors, and the edges between them. Nothing in the layer definition requires knowing the whole graph at once &mdash; which is exactly why this scales to graphs with billions of nodes, and why <code>edge_index</code> (Lesson 2) is all a layer ever needs to read.
+</div>
+
+<h2>Worked example: updating node C</h2>
+
+<p>Let's trace one layer by hand on the four-node graph from Lesson 2 (A&ndash;B, A&ndash;C, B&ndash;C, C&ndash;D). Node C has three neighbors: A, B, and D.</p>
+
+<figure>
+  <svg viewBox="0 0 240 200" width="280" xmlns="http://www.w3.org/2000/svg">
+    <defs>
+      <marker id="l4arrow" viewBox="0 0 10 10" refX="7" refY="5" markerWidth="5" markerHeight="5" orient="auto-start-reverse">
+        <path d="M0,0 L10,5 L0,10 z" fill="#2d6a4f"/>
+      </marker>
+    </defs>
+    <line x1="60" y1="30" x2="160" y2="30" stroke="#dee2e6" stroke-width="2"/>
+    <line x1="176" y1="42" x2="126" y2="98" stroke="#2d6a4f" stroke-width="2.5" marker-end="url(#l4arrow)"/>
+    <line x1="76" y1="42" x2="102" y2="97" stroke="#2d6a4f" stroke-width="2.5" marker-end="url(#l4arrow)"/>
+    <line x1="168" y1="162" x2="126" y2="122" stroke="#2d6a4f" stroke-width="2.5" marker-end="url(#l4arrow)"/>
+    <circle cx="60" cy="30" r="16" fill="#d8f3dc" stroke="#2d6a4f" stroke-width="2"/>
+    <text x="60" y="35" text-anchor="middle" font-size="14" font-family="Georgia, serif">A</text>
+    <circle cx="160" cy="30" r="16" fill="#d8f3dc" stroke="#2d6a4f" stroke-width="2"/>
+    <text x="160" y="35" text-anchor="middle" font-size="14" font-family="Georgia, serif">B</text>
+    <circle cx="110" cy="110" r="18" fill="#fff3cd" stroke="#ffc107" stroke-width="2.5"/>
+    <text x="110" y="115" text-anchor="middle" font-size="14" font-family="Georgia, serif">C</text>
+    <circle cx="180" cy="170" r="16" fill="#d8f3dc" stroke="#2d6a4f" stroke-width="2"/>
+    <text x="180" y="175" text-anchor="middle" font-size="14" font-family="Georgia, serif">D</text>
+  </svg>
+  <figcaption>Node C gathers one message each from A, B, and D, then aggregates and updates.</figcaption>
+</figure>
+
+<pre><code># gather: one message per neighbor of C
+m_A = MSG(h_C, h_A)
+m_B = MSG(h_C, h_B)
+m_D = MSG(h_C, h_D)
+
+# aggregate: combine the (unordered) set {m_A, m_B, m_D}
+a_C = AGG({m_A, m_B, m_D})     # e.g. sum, mean, or max
+
+# update: fold the aggregate into C's own previous state
+h_C' = UPD(h_C, a_C)</code></pre>
+
+<p>Meanwhile A, B, and D are running the exact same recipe over <em>their</em> own neighborhoods, at the same time. After one layer, every node's embedding has absorbed information from its immediate (1-hop) neighbors &mdash; what happens when you stack more than one layer is Lesson 5.</p>
+
+<h2>Why aggregation must be permutation-invariant</h2>
+
+<p>Notice that step 2 wrote AGG over a <em>set</em> {m<sub>A</sub>, m<sub>B</sub>, m<sub>D</sub>}, not a list. That's deliberate. A node's neighborhood N(i) has no canonical order &mdash; "A, B, D" and "D, B, A" describe the exact same neighbor set. The only thing that distinguishes A, B, and D from each other is <em>their own features</em>, carried inside each message; the order we happen to iterate over them while writing code is an implementation detail, not part of the graph.</p>
+
+<p>Recall Lesson 1's permutation equivariance requirement: relabeling the nodes of a graph must not change what the GNN computes, only how the output is indexed. If AGG's result depended on the order its inputs were listed, then two people drawing the identical graph with a different node-labeling convention would get a different embedding for the same node &mdash; a GNN that isn't equivariant to a completely arbitrary choice (how you happened to number the nodes) is not usable as a general graph model.</p>
+
+<div class="key-idea">
+  <strong>Key idea:</strong> AGG must satisfy AGG({m<sub>A</sub>, m<sub>B</sub>, m<sub>D</sub>}) = AGG({m<sub>B</sub>, m<sub>D</sub>, m<sub>A</sub>}) = &hellip; for every permutation of the same set. Functions that reduce a set to a fixed-size vector this way &mdash; sum, mean, max &mdash; are called <strong>permutation-invariant aggregators</strong>. This single constraint is what makes message passing well-defined on graphs at all.
+</div>
+
+<h2>Choosing an aggregator: sum vs. mean vs. max</h2>
+
+<p>Sum, mean, and max are all valid (permutation-invariant), but they preserve different information:</p>
+
+<table style="width:100%; border-collapse:collapse; margin:1rem 0; font-size:0.9rem;">
+  <thead>
+    <tr style="border-bottom:2px solid var(--border); text-align:left;">
+      <th style="padding:0.5rem;">Aggregator</th>
+      <th style="padding:0.5rem;">Keeps</th>
+      <th style="padding:0.5rem;">Loses</th>
+      <th style="padding:0.5rem;">Typical use</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr style="border-bottom:1px solid var(--border);">
+      <td style="padding:0.5rem;">Sum</td>
+      <td style="padding:0.5rem;">Neighbor count (degree) information</td>
+      <td style="padding:0.5rem;">Scale grows unbounded with degree</td>
+      <td style="padding:0.5rem;">GIN (Lesson 10) &mdash; maximizes expressiveness</td>
+    </tr>
+    <tr style="border-bottom:1px solid var(--border);">
+      <td style="padding:0.5rem;">Mean</td>
+      <td style="padding:0.5rem;">A degree-normalized average signal</td>
+      <td style="padding:0.5rem;">How many neighbors contributed</td>
+      <td style="padding:0.5rem;">GCN (Lesson 7), GraphSAGE-mean</td>
+    </tr>
+    <tr>
+      <td style="padding:0.5rem;">Max</td>
+      <td style="padding:0.5rem;">The single most salient neighbor signal</td>
+      <td style="padding:0.5rem;">Everyone else's contribution entirely</td>
+      <td style="padding:0.5rem;">GraphSAGE-pool</td>
+    </tr>
+  </tbody>
+</table>
+
+<div class="analogy">
+  <strong>Analogy:</strong> This is the same trade-off as choosing sum-pooling vs. average-pooling vs. max-pooling in a CNN. Sum keeps a signal proportional to "how much stuff is here," mean normalizes that away, and max keeps only the strongest activation. The graph setting is more consequential, though: unlike a CNN's fixed 3&times;3 window, a node's neighborhood size (its degree) varies wildly across the graph, so the choice of aggregator interacts directly with degree variance.
+</div>
+
+<p>A quick reference card capturing this whole framework in clean notation and pseudocode lives at <a href="../reference/message-passing-cheatsheet.html">reference/message-passing-cheatsheet.html</a> &mdash; worth bookmarking, since GCN, GraphSAGE, GAT, and GIN are all just different (MSG, AGG, UPD) triples plugged into this same loop.</p>
+
+<h2>Check your understanding</h2>
+
+<div class="quiz">
+  <p class="quiz-question">1. Node C has neighbors A, B, and D. If you swap the order in which their messages are listed before aggregating, what should happen to C's updated embedding?</p>
+  <ul class="quiz-options">
+    <li data-correct="true">The result stays unchanged</li>
+    <li data-correct="false">The result becomes random</li>
+    <li data-correct="false">The result flips sign</li>
+    <li data-correct="false">The result loses information</li>
+  </ul>
+  <div class="quiz-explanation">Sum, mean, and max are permutation-invariant: reordering the same set of neighbor messages doesn't change the aggregated output. This is required so the computation doesn't secretly depend on an arbitrary node-listing order.</div>
+</div>
+
+<div class="quiz">
+  <p class="quiz-question">2. Which of the following aggregation functions is <em>not</em> permutation-invariant over a neighbor set?</p>
+  <ul class="quiz-options">
+    <li data-correct="true">Concatenation in listed order</li>
+    <li data-correct="false">Element-wise sum of messages</li>
+    <li data-correct="false">Element-wise mean of messages</li>
+    <li data-correct="false">Element-wise max of messages</li>
+  </ul>
+  <div class="quiz-explanation">Concatenating messages in whatever order you happened to iterate over them produces a different vector for a different ordering of the same neighbor set &mdash; it's order-<em>dependent</em>, not invariant. Sum, mean, and max all give the same result regardless of order.</div>
+</div>
+
+<div class="quiz">
+  <p class="quiz-question">3. A GCN-style mean aggregator divides the summed neighbor messages by degree. What does this primarily correct for?</p>
+  <ul class="quiz-options">
+    <li data-correct="true">Nodes with very different degrees</li>
+    <li data-correct="false">Nodes with identical feature vectors</li>
+    <li data-correct="false">Edges with missing edge features</li>
+    <li data-correct="false">Layers with too few parameters</li>
+  </ul>
+  <div class="quiz-explanation">Mean aggregation normalizes by neighbor count, so a high-degree node doesn't simply dominate by summing over more terms. Without this normalization, nodes with widely varying degree would produce aggregate messages on very different scales.</div>
+</div>
+
+<h2>Primary source</h2>
+
+<div class="source-link">
+  Read: <a href="https://distill.pub/2021/gnn-intro/" target="_blank">"A Gentle Introduction to Graph Neural Networks"</a> by Sanchez-Lengeling et al. (Distill, 2021), <strong>Section 6</strong> ("GNN predictions by pooling information"), for the interactive gather/aggregate walkthrough. For the formal treatment with full notation, see William L. Hamilton's <a href="https://www.cs.mcgill.ca/~wlh/grl_book/" target="_blank">"Graph Representation Learning"</a>, <strong>Section 5.1</strong> ("Neural Message Passing").
+</div>
+
+<div class="followup">
+  Questions about anything in this lesson? Ask your teacher &mdash; run <code>/teach</code> and ask about whatever is unclear. Next up: <strong>Lesson 5 &mdash; Stacking Layers and the Receptive Field</strong>, where we see what happens when you chain several of these layers together.
+</div>
+
+<div class="nav-links">
+  <a href="0003-three-prediction-tasks.html">&larr; Lesson 3: The Three Prediction Tasks</a>
+  <a href="0005-stacking-layers-and-receptive-field.html">Lesson 5: Stacking Layers &rarr;</a>
+</div>
+
+</body>
+</html>

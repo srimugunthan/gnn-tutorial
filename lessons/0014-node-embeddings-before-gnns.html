@@ -1,0 +1,150 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Lesson 14: Node Embeddings Before GNNs</title>
+  <link rel="stylesheet" href="../assets/style.css">
+  <script src="../assets/quiz.js"></script>
+</head>
+<body>
+
+<div class="lesson-number">Lesson 14</div>
+<h1>Node Embeddings Before GNNs</h1>
+
+<p>Lessons 4&ndash;13 built node embeddings the message-passing way: gather, aggregate, update, stack layers, pool, train. But that isn't how the field got its first working node embeddings. From roughly 2014 to 2016 &mdash; before Kipf &amp; Welling's GCN paper (2017) made message passing the default &mdash; the dominant approach never looked at a neighbor's features at all. This lesson covers that predecessor family: DeepWalk, node2vec, and LINE.</p>
+
+<h2>The shallow embedding recipe</h2>
+
+<p>Compare two ways of assigning node v a vector:</p>
+
+<ul>
+  <li><strong>GNN encoder</strong> (Lesson 4 onward): z<sub>v</sub> = f(features of v and its neighbors; shared weights) &mdash; a function, applied to local structure and features.</li>
+  <li><strong>Shallow embedding:</strong> z<sub>v</sub> = Z[v] &mdash; a single row of a directly-learned lookup table Z &isin; &Ropf;<sup>|V| &times; d</sup>, indexed by node ID. No features, no neighbor aggregation, no shared function &mdash; just one free vector per node, optimized directly.</li>
+</ul>
+
+<p>The training objective is borrowed wholesale from NLP: <strong>skip-gram</strong>, the same idea behind word2vec (Mikolov et al., 2013). Word2vec treats "words that co-occur in a sentence window" as a training signal &mdash; nearby words should have similar embeddings. Shallow graph embeddings treat "nodes that co-occur in some generated sequence" the same way. The only real design question separating DeepWalk, node2vec, and LINE is: what counts as a sequence, and what counts as "nearby"?</p>
+
+<h2>DeepWalk: random walks as sentences</h2>
+
+<p>DeepWalk (Perozzi, Al-Rfou &amp; Skiena, <a href="https://arxiv.org/abs/1403.6652" target="_blank">arXiv:1403.6652</a>, KDD 2014) generates many <strong>random walks</strong> from every node: starting at v, repeatedly hop to a uniformly-random neighbor for some fixed number of steps. Each walk is a sequence of node IDs &mdash; treat it exactly like a sentence of words, and run skip-gram (with negative sampling) over it: slide a context window along the walk, and train Z so that a center node's embedding predicts the nodes that appear in its window.</p>
+
+<figure>
+  <svg viewBox="0 0 260 200" width="260" xmlns="http://www.w3.org/2000/svg">
+    <line x1="60" y1="30" x2="160" y2="30" stroke="#adb5bd" stroke-width="2"/>
+    <line x1="60" y1="30" x2="110" y2="110" stroke="#adb5bd" stroke-width="2"/>
+    <line x1="160" y1="30" x2="110" y2="110" stroke="#adb5bd" stroke-width="2"/>
+    <line x1="110" y1="110" x2="180" y2="170" stroke="#adb5bd" stroke-width="2"/>
+
+    <circle cx="60" cy="30" r="16" fill="#d8f3dc" stroke="#2d6a4f" stroke-width="2"/>
+    <text x="60" y="35" text-anchor="middle" font-size="14" font-family="Georgia, serif">A</text>
+    <circle cx="160" cy="30" r="16" fill="#d8f3dc" stroke="#2d6a4f" stroke-width="2"/>
+    <text x="160" y="35" text-anchor="middle" font-size="14" font-family="Georgia, serif">B</text>
+    <circle cx="110" cy="110" r="16" fill="#d8f3dc" stroke="#2d6a4f" stroke-width="2"/>
+    <text x="110" y="115" text-anchor="middle" font-size="14" font-family="Georgia, serif">C</text>
+    <circle cx="180" cy="170" r="16" fill="#d8f3dc" stroke="#2d6a4f" stroke-width="2"/>
+    <text x="180" y="175" text-anchor="middle" font-size="14" font-family="Georgia, serif">D</text>
+
+    <circle cx="75" cy="18" r="9" fill="#fff3cd" stroke="#e8590c"/>
+    <text x="75" y="21" text-anchor="middle" font-size="9" font-family="Georgia, serif">1</text>
+    <circle cx="95" cy="65" r="9" fill="#fff3cd" stroke="#e8590c"/>
+    <text x="95" y="68" text-anchor="middle" font-size="9" font-family="Georgia, serif">2</text>
+    <circle cx="145" cy="140" r="9" fill="#fff3cd" stroke="#e8590c"/>
+    <text x="145" y="143" text-anchor="middle" font-size="9" font-family="Georgia, serif">3</text>
+    <circle cx="140" cy="70" r="9" fill="#fff3cd" stroke="#e8590c"/>
+    <text x="140" y="73" text-anchor="middle" font-size="9" font-family="Georgia, serif">4</text>
+  </svg>
+  <figcaption>A random walk A &rarr; C &rarr; D &rarr; C &rarr; B (steps 1&ndash;4) produces the "sentence" [A, C, D, C, B] that skip-gram trains on.</figcaption>
+</figure>
+
+<p>Nodes that co-occur often across many such walks &mdash; because they're densely interconnected or otherwise structurally close &mdash; end up with similar embeddings. That's the whole mechanism: no features, no explicit aggregation function, just "predict my random-walk neighbors."</p>
+
+<h2>node2vec: biasing the walk</h2>
+
+<p>node2vec (Grover &amp; Leskovec, <a href="https://arxiv.org/abs/1607.00653" target="_blank">arXiv:1607.00653</a>, KDD 2016) keeps DeepWalk's skip-gram-over-walks skeleton but generalizes the walk itself from uniform to a <strong>2nd-order biased random walk</strong>, controlled by two hyperparameters: return parameter <strong>p</strong> (how likely the walk is to immediately backtrack to the node it just came from) and in-out parameter <strong>q</strong> (how likely it is to venture further away vs. stay local). Formally, having just moved from t to the current node v, the unnormalized weight for stepping to a candidate x is scaled by 1/p if x = t (returning), 1 if x is also a neighbor of t (staying local), and 1/q if x is farther from t than v is (exploring outward).</p>
+
+<div class="key-idea">
+  <strong>Key idea:</strong> Low q biases the walk toward DFS-like exploration, producing embeddings that capture <em>homophily</em> &mdash; nodes in the same community end up close in embedding space. High q biases toward BFS-like exploration, capturing <em>structural equivalence</em> &mdash; nodes that play the same structural role (e.g. "hub" or "bridge") end up close even if they sit in entirely different parts of the graph. p and q only change the sampling strategy; the embedding table and skip-gram loss underneath are otherwise identical to DeepWalk.
+</div>
+
+<h2>LINE: no walks at all</h2>
+
+<p>LINE (Tang et al., <a href="https://arxiv.org/abs/1503.03578" target="_blank">arXiv:1503.03578</a>, WWW 2015) drops random walks entirely and optimizes two proximities directly: <strong>first-order proximity</strong> (nodes joined by an edge should have similar embeddings &mdash; a direct pairwise signal) and <strong>second-order proximity</strong> (nodes with similar neighborhoods, even without a direct edge, should have similar embeddings &mdash; the "shared context" idea from skip-gram, computed from shared neighbors instead of walk co-occurrence). Each proximity is trained as its own embedding set, then the two are concatenated. LINE's motivation was explicit: scale to production social networks with hundreds of millions of edges, where generating and storing large numbers of random walks is itself a cost worth avoiding.</p>
+
+<h2>Why GNNs superseded shallow embeddings for most uses</h2>
+
+<p>Three structural limitations, all stemming from the same root cause &mdash; Z is a table indexed by node identity, not a function of anything:</p>
+
+<ol>
+  <li><strong>No node features used.</strong> DeepWalk/node2vec/LINE see only graph topology and node ID; any real feature vector you have &mdash; bag-of-words on a paper, transaction statistics on an account &mdash; is simply discarded. A GNN encoder consumes those features directly at every message-passing step.</li>
+  <li><strong>Fixed to the training graph &mdash; no inductive generalization.</strong> Z's rows correspond one-to-one to the node IDs present when training ran. A node that shows up afterward has no row and no way to get one short of rerunning the whole skip-gram training procedure. GraphSAGE, GAT, and GIN instead learn a function of local neighborhood features that applies to any node, seen or not, at inference time (Lesson 8's inductive framing). This is precisely the everyday reality of a fraud graph: new accounts and transactions appear continuously, so a detection pipeline that needs a full embedding-table retrain before it can score a new account is a non-starter operationally.</li>
+  <li><strong>No parameter sharing across the graph.</strong> Z has O(|V| &times; d) parameters &mdash; growing linearly with the graph &mdash; and each node's vector is optimized almost independently. A GNN's weight matrices are shared across every node and scale with feature dimension rather than node count, which is both a smaller model and, through that shared function, an implicit way for nodes to borrow statistical strength from each other.</li>
+</ol>
+
+<h2>Where shallow embeddings still make sense</h2>
+
+<p>None of this makes DeepWalk/node2vec/LINE obsolete everywhere:</p>
+
+<ul>
+  <li><strong>Featureless, purely structural graphs</strong> &mdash; where topology genuinely is all you have, so a GNN's feature-consuming machinery has nothing extra to exploit.</li>
+  <li><strong>Fixed, closed-world, transductive graphs</strong> &mdash; the node set is known upfront and won't grow, so the inductive-generalization limitation never bites.</li>
+  <li><strong>Cheap baselines and fast prototyping</strong> &mdash; skip-gram training is lightweight compared to backpropagating through variable-depth neighborhood aggregation, and it's often the fastest way to get a first embedding to sanity-check against.</li>
+  <li><strong>Coarse structural-similarity tasks</strong> &mdash; visualization, quick clustering &mdash; where a discriminative signal tied to rich features isn't the point.</li>
+</ul>
+
+<div class="key-idea">
+  <strong>Key idea:</strong> Shallow embeddings and GNN encoders aren't mutually exclusive. It's common to see pretrained DeepWalk or node2vec vectors used to initialize a GNN's input features, or included as one input feature among several &mdash; the historical predecessor becomes a component of the modern pipeline rather than a competitor to it.
+</div>
+
+<h2>Check your understanding</h2>
+
+<div class="quiz">
+  <p class="quiz-question">1. What is the main input to a DeepWalk or node2vec embedding, unlike a GNN?</p>
+  <ul class="quiz-options">
+    <li data-correct="true">Only the node's identity</li>
+    <li data-correct="false">Only the node's features</li>
+    <li data-correct="false">Only the node's degree</li>
+    <li data-correct="false">Only the node's neighbors</li>
+  </ul>
+  <div class="quiz-explanation">Shallow embeddings look up a row of a table indexed purely by node ID. They never consume node features, degree, or neighbor information directly &mdash; any structural signal they capture comes indirectly, through which nodes co-occur in random walks.</div>
+</div>
+
+<div class="quiz">
+  <p class="quiz-question">2. In node2vec, what do the return parameter p and in-out parameter q jointly control?</p>
+  <ul class="quiz-options">
+    <li data-correct="true">How biased the random walk is</li>
+    <li data-correct="false">How large the embedding table is</li>
+    <li data-correct="false">How many negative samples are used</li>
+    <li data-correct="false">How many GNN layers are stacked</li>
+  </ul>
+  <div class="quiz-explanation">p and q bias the 2nd-order random walk toward backtracking, staying local, or exploring outward &mdash; interpolating between DFS-like walks (homophily) and BFS-like walks (structural equivalence). They don't change the table size, the negative-sampling count, or anything about GNN layers &mdash; node2vec has no message-passing layers at all.</div>
+</div>
+
+<div class="quiz">
+  <p class="quiz-question">3. A fraud-detection graph gains thousands of new accounts every day. Why is this a problem for a DeepWalk-style shallow embedding?</p>
+  <ul class="quiz-options">
+    <li data-correct="true">New nodes have no learned embedding row</li>
+    <li data-correct="false">New nodes always get duplicate embedding rows</li>
+    <li data-correct="false">New edges always overwrite existing embedding rows</li>
+    <li data-correct="false">New features always corrupt existing embedding rows</li>
+  </ul>
+  <div class="quiz-explanation">Z is indexed by the node IDs seen during training; a node that didn't exist then has no row in the table and can't get one without rerunning training. An inductive GNN encoder, by contrast, computes an embedding as a function of local neighborhood features that works on nodes it has never seen.</div>
+</div>
+
+<h2>Primary source</h2>
+
+<div class="source-link">
+  Read: <a href="https://www.cs.mcgill.ca/~wlh/grl_book/" target="_blank">"Graph Representation Learning"</a> by William L. Hamilton, <strong>Chapters 3&ndash;4</strong>, for the systematic treatment of shallow embeddings and the encoder-decoder framing that unifies DeepWalk, node2vec, and LINE. Then: <a href="https://arxiv.org/abs/1607.00653" target="_blank">Grover &amp; Leskovec, "node2vec: Scalable Feature Learning for Networks"</a> (2016) for the biased random walk itself.
+</div>
+
+<div class="followup">
+  Questions about anything in this lesson? Ask your teacher &mdash; run <code>/teach</code> and ask about whatever is unclear. Next up: <strong>Lesson 15 &mdash; The Weisfeiler-Leman Hierarchy</strong>, where we'll pin down exactly what GNNs can and can't distinguish between graphs.
+</div>
+
+<div class="nav-links">
+  <a href="0013-loss-functions-and-training-strategies.html">&larr; Lesson 13: Loss Functions and Training Strategies</a>
+  <a href="0015-weisfeiler-leman-hierarchy.html">Lesson 15: The Weisfeiler-Leman Hierarchy &rarr;</a>
+</div>
+
+</body>
+</html>

@@ -1,0 +1,133 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Lesson 8: GraphSAGE: Inductive Learning and Sampling</title>
+  <link rel="stylesheet" href="../assets/style.css">
+  <script src="../assets/quiz.js"></script>
+</head>
+<body>
+
+<div class="lesson-number">Lesson 8</div>
+<h1>GraphSAGE: Inductive Learning and Sampling</h1>
+
+<p>Lesson 7 ended on a limitation: GCN's propagation rule bakes the specific graph's normalized adjacency matrix into the model, so it's trained and evaluated on one fixed graph. <strong>GraphSAGE</strong> (SAmple and aggreGatE), from Hamilton, Ying &amp; Leskovec (2017), was built explicitly to remove that constraint &mdash; and to make message passing tractable on graphs with millions of nodes, where even loading the full adjacency matrix into memory is a problem.</p>
+
+<h2>The limitation it solves: fixed-graph, full-batch training doesn't scale or generalize</h2>
+
+<p>Two separate problems compound in the original GCN formulation:</p>
+
+<ul>
+  <li><strong>Scalability.</strong> Full-batch GCN computes a forward pass over the <em>entire</em> graph at once. For a graph with a billion edges, that's a lot of memory and compute per gradient step, and it only gets worse as you stack more layers &mdash; the receptive field of Lesson 5 grows to cover most of the graph.</li>
+  <li><strong>Generalization to new nodes.</strong> Because GCN's aggregation weights are derived from the fixed D&#771; and &Atilde; of one graph, there's no defined way to compute an embedding for a node that arrives after training without recomputing over the whole graph again.</li>
+</ul>
+
+<p>GraphSAGE addresses both with the same idea: stop treating the aggregation as an operation over the whole graph, and instead treat it as a <em>function</em> &mdash; learned once, applied locally to any node's neighborhood, on demand.</p>
+
+<h2>The core mechanism: sample, then aggregate</h2>
+
+<p>At each layer k, instead of gathering messages from <em>all</em> of a node's neighbors, GraphSAGE draws a fixed-size uniform sample S<sub>k</sub> of neighbors (e.g. sample 10, even if the node has 500). The forward pass, for a node v at depth K, is:</p>
+
+<div class="key-idea">
+  <strong>GraphSAGE forward propagation (per node v, layer k = 1..K):</strong><br>
+  h<sup>0</sup><sub>v</sub> = x<sub>v</sub><br>
+  h<sup>k</sup><sub>N(v)</sub> = AGGREGATE<sub>k</sub>( { h<sup>k&minus;1</sup><sub>u</sub> : u &isin; sample(N(v)) } )<br>
+  h<sup>k</sup><sub>v</sub> = &sigma;( W<sup>k</sup> &middot; CONCAT( h<sup>k&minus;1</sup><sub>v</sub>, h<sup>k</sup><sub>N(v)</sub> ) )<br>
+  h<sup>k</sup><sub>v</sub> = h<sup>k</sup><sub>v</sub> / &Vert;h<sup>k</sup><sub>v</sub>&Vert;<sub>2</sub>  (L2-normalize)
+</div>
+
+<p>Two details worth flagging against the message-passing template from Lesson 4:</p>
+<ul>
+  <li><strong>Concatenation, not fixed weighted sum.</strong> GCN mixes the self-term into the same weighted average as neighbors (via the self-loop). GraphSAGE instead <em>concatenates</em> the node's previous representation with the aggregated neighbor representation, then applies a learned W &mdash; giving the update more freedom to weigh "self" against "neighbors" separately, closer to a residual/skip connection.</li>
+  <li><strong>Sampling makes cost independent of degree.</strong> Since S<sub>k</sub> has a fixed size, the compute and memory cost of one node's forward pass is bounded by K and the sample sizes, not by the graph's actual degree distribution &mdash; crucial for graphs with high-degree hub nodes.</li>
+</ul>
+
+<h2>Three aggregator choices</h2>
+
+<p>AGGREGATE<sub>k</sub> must still be permutation-invariant (Lesson 4) since a sampled neighbor set has no inherent order. The paper evaluates three options:</p>
+
+<ul>
+  <li><strong>Mean aggregator:</strong> elementwise mean of the sampled neighbor vectors &mdash; the simplest option, structurally close to GCN's rule but without degree-based weighting.</li>
+  <li><strong>LSTM aggregator:</strong> feed the neighbor vectors through an LSTM for more expressive power. But an LSTM is not inherently permutation-invariant &mdash; the paper's workaround is to feed neighbors in a <em>random</em> order each time, adapting a sequence model to an unordered set.</li>
+  <li><strong>Pooling aggregator:</strong> transform every neighbor independently through a small MLP, then take an elementwise max: aggregate<sub>pool</sub> = max({ &sigma;(W<sub>pool</sub> h<sub>u</sub> + b) : u &isin; N(v) }). This is a direct ancestor of the max-based expressiveness argument you'll meet again in Lesson 10.</li>
+</ul>
+
+<h2>What's new: learning a function, not a lookup table</h2>
+
+<p>This is the conceptual heart of the paper. Earlier node-embedding methods (and GCN, in effect) learn something closer to a table of per-node vectors, fit to one specific graph. GraphSAGE instead learns the <strong>aggregator functions and weight matrices W<sup>k</sup></strong> &mdash; objects that don't reference any particular node's identity or the graph's specific size. Once learned, that same function can be applied to a node's neighborhood <em>regardless of whether that node existed during training</em>, as long as it has features and edges to sample from.</p>
+
+<div class="analogy">
+  <strong>Analogy:</strong> GCN is like memorizing a lookup table of answers for the students in one specific classroom. GraphSAGE is like learning a general study method &mdash; a new student who walks in later (a new node, with features and neighbors) can still apply the same method to produce a sensible answer, without the table being recomputed.
+</div>
+
+<h2>Inductive by construction</h2>
+
+<p>This is why GraphSAGE is the canonical <strong>inductive</strong> GNN: it generalizes to nodes, and even entire graphs, unseen at training time, as long as they come with node features. That's a strict requirement, though &mdash; GraphSAGE needs meaningful node features to work from (e.g. profile attributes, transaction amounts). A method relying purely on learned per-node identity embeddings, with no features at all, has nothing to compute for a brand-new node.</p>
+
+<div class="key-idea">
+  <strong>Key idea:</strong> Transductive vs. inductive is really a question of <em>what the model has learned to depend on</em>. GCN's learned parameters are entangled with one fixed graph's structure. GraphSAGE's learned parameters &mdash; the aggregator and W<sup>k</sup> matrices &mdash; are graph-agnostic functions applied locally. This is exactly the property you'd want for a fraud graph where new accounts and transactions appear every hour and you can't afford to retrain (or reprocess the entire graph) before scoring them.
+</div>
+
+<h2>Training without labels: the unsupervised objective</h2>
+
+<p>GraphSAGE can be trained with ordinary supervised loss (e.g. cross-entropy on node labels) exactly like GCN. But the paper also proposes an unsupervised, graph-structure-based loss for settings without labels, based on the same intuition as word2vec-style embeddings: nodes that co-occur on short random walks should end up with similar embeddings, and randomly sampled distant nodes should not:</p>
+
+<pre><code>J(z_u) = &minus;log(&sigma;(z_u&middot;z_v)) &minus; Q&middot;E[log(&sigma;(&minus;z_u&middot;z_vn))]
+# v: a node near u on a random walk
+# vn: a "negative" node sampled roughly at random</code></pre>
+
+<p>This will resurface in Lesson 14 when we look at node embedding methods that predate GNNs entirely.</p>
+
+<h2>Check your understanding</h2>
+
+<div class="quiz">
+  <p class="quiz-question">1. GraphSAGE controls computation cost per node primarily by doing what?</p>
+  <ul class="quiz-options">
+    <li data-correct="true">Sampling a fixed number of neighbors</li>
+    <li data-correct="false">Sampling a fixed number of layers</li>
+    <li data-correct="false">Caching a fixed number of embeddings</li>
+    <li data-correct="false">Pruning a fixed number of edges</li>
+  </ul>
+  <div class="quiz-explanation">At each layer, GraphSAGE draws a fixed-size uniform sample of a node's neighbors rather than aggregating over all of them, so per-node cost stays bounded regardless of the node's actual degree.</div>
+</div>
+
+<div class="quiz">
+  <p class="quiz-question">2. What makes GraphSAGE inductive rather than transductive?</p>
+  <ul class="quiz-options">
+    <li data-correct="true">It learns aggregator functions, not embeddings</li>
+    <li data-correct="false">It learns node embeddings, not functions</li>
+    <li data-correct="false">It learns the full adjacency matrix</li>
+    <li data-correct="false">It learns attention weights per edge</li>
+  </ul>
+  <div class="quiz-explanation">GraphSAGE's learned parameters are the aggregator and weight matrices &mdash; graph-agnostic functions that can be applied to any node's local neighborhood, including nodes that didn't exist during training, as long as they have features.</div>
+</div>
+
+<div class="quiz">
+  <p class="quiz-question">3. Applying an LSTM aggregator to a node's neighbors requires which extra step to fit the permutation-invariance requirement from Lesson 4?</p>
+  <ul class="quiz-options">
+    <li data-correct="true">Randomly permuting neighbors before feeding the LSTM</li>
+    <li data-correct="false">Sorting neighbors by degree before the LSTM</li>
+    <li data-correct="false">Averaging neighbors together before the LSTM runs</li>
+    <li data-correct="false">Removing neighbors randomly before the LSTM runs</li>
+  </ul>
+  <div class="quiz-explanation">An LSTM processes its input as an ordered sequence, so it isn't naturally permutation-invariant. The paper's workaround is to feed the sampled neighbors in a random order each time, trading a clean theoretical guarantee for the LSTM's extra expressive power.</div>
+</div>
+
+<h2>Primary source</h2>
+
+<div class="source-link">
+  Read: Hamilton, Ying &amp; Leskovec, <a href="https://arxiv.org/abs/1706.02216" target="_blank">"Inductive Representation Learning on Large Graphs"</a> (2017). Focus on <strong>Section 3</strong> (the algorithm and aggregator architectures) and <strong>Section 3.3</strong> (the unsupervised and supervised loss functions).
+</div>
+
+<div class="followup">
+  Questions about anything in this lesson? Ask your teacher &mdash; run <code>/teach</code> and ask about whatever is unclear. Next up: <strong>Lesson 9 &mdash; GAT: Attention on Graphs</strong>, where neighbor weighting stops being fixed by degree and starts being learned from content.
+</div>
+
+<div class="nav-links">
+  <a href="0007-gcn-spectral-roots-spatial-practice.html">&larr; Lesson 7: GCN</a>
+  <a href="0009-gat-attention-on-graphs.html">Lesson 9: GAT &rarr;</a>
+</div>
+
+</body>
+</html>

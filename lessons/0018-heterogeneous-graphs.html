@@ -1,0 +1,169 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Lesson 18: Heterogeneous Graphs</title>
+  <link rel="stylesheet" href="../assets/style.css">
+  <script src="../assets/quiz.js"></script>
+</head>
+<body>
+
+<div class="lesson-number">Lesson 18</div>
+<h1>Heterogeneous Graphs</h1>
+
+<p>Every architecture so far &mdash; GCN, GraphSAGE, GAT, GIN, graph transformers &mdash; has quietly assumed one node type and one edge type. A social network's "friend" edges, a molecule's bonds: one relation, one meaning, one shared weight matrix. Most real graphs aren't like that. A citation graph has <strong>papers</strong>, <strong>authors</strong>, and <strong>venues</strong> as node types, connected by <strong>cites</strong>, <strong>writes</strong>, and <strong>published_in</strong> edges. A financial graph has <strong>accounts</strong>, <strong>merchants</strong>, and <strong>devices</strong> linked by <strong>transacts</strong>, <strong>owns</strong>, and <strong>logs_in_from</strong> edges. These are <strong>heterogeneous graphs</strong>, and treating every edge the same way throws away exactly the information that makes them useful.</p>
+
+<h2>Why one weight matrix isn't enough</h2>
+
+<p>Recall the message-passing update from earlier lessons: a node aggregates transformed messages from its neighbors, typically via <strong>h<sub>i</sub>' = &sigma;(&sum;<sub>j&isin;N(i)</sub> W h<sub>j</sub>)</strong>, with a single learned W shared across every edge. Now consider the citation graph:</p>
+
+<figure>
+  <svg viewBox="0 0 380 260" width="380" xmlns="http://www.w3.org/2000/svg">
+    <line x1="90" y1="60" x2="190" y2="130" stroke="#1a1a2e" stroke-width="2"/>
+    <line x1="90" y1="200" x2="190" y2="130" stroke="#1a1a2e" stroke-width="2"/>
+    <line x1="290" y1="60" x2="190" y2="130" stroke="#1a1a2e" stroke-width="2"/>
+    <line x1="190" y1="130" x2="300" y2="200" stroke="#1a1a2e" stroke-width="2"/>
+    <text x="140" y="90" font-size="10" fill="#6c757d" font-family="Georgia, serif">writes</text>
+    <text x="120" y="175" font-size="10" fill="#6c757d" font-family="Georgia, serif">writes</text>
+    <text x="255" y="90" font-size="10" fill="#6c757d" font-family="Georgia, serif">cites</text>
+    <text x="235" y="175" font-size="10" fill="#6c757d" font-family="Georgia, serif">published_in</text>
+    <circle cx="90" cy="60" r="20" fill="#d0ebff" stroke="#1971c2" stroke-width="2"/>
+    <text x="90" y="65" text-anchor="middle" font-size="11" font-family="Georgia, serif">Author</text>
+    <circle cx="90" cy="200" r="20" fill="#d0ebff" stroke="#1971c2" stroke-width="2"/>
+    <text x="90" y="205" text-anchor="middle" font-size="11" font-family="Georgia, serif">Author</text>
+    <circle cx="190" cy="130" r="22" fill="#d8f3dc" stroke="#2d6a4f" stroke-width="2"/>
+    <text x="190" y="135" text-anchor="middle" font-size="11" font-family="Georgia, serif">Paper</text>
+    <circle cx="290" cy="60" r="20" fill="#d8f3dc" stroke="#2d6a4f" stroke-width="2"/>
+    <text x="290" y="65" text-anchor="middle" font-size="11" font-family="Georgia, serif">Paper</text>
+    <circle cx="300" cy="200" r="20" fill="#fff3cd" stroke="#e8a33d" stroke-width="2"/>
+    <text x="300" y="205" text-anchor="middle" font-size="10" font-family="Georgia, serif">Venue</text>
+  </svg>
+  <figcaption>Three node types (Author, Paper, Venue) and three edge types (writes, cites, published_in). A "cites" edge and a "writes" edge connect completely different kinds of things for completely different reasons.</figcaption>
+</figure>
+
+<p>An author "writing" a paper and a paper "citing" another paper are not the same kind of relationship, even though both are just edges in the adjacency structure. Squeezing them through the same W forces the model to learn one transformation that has to work for two semantically unrelated operations. The fix seems obvious once stated: give each relation type its own transformation.</p>
+
+<div class="key-idea">
+  <strong>Key idea:</strong> A heterogeneous graph has a typed schema &mdash; a set of node types and a set of relation (edge) types, each of which may deserve its own weight matrix. This is a strict generalization of everything so far: a graph with one node type and one edge type is just the homogeneous special case.
+</div>
+
+<h2>R-GCN: relation-specific weight matrices</h2>
+
+<p><strong>R-GCN</strong> (Relational GCN, Schlichtkrull et al. 2018) is the direct extension of GCN-style message passing to multiple relations. Instead of one shared W, every relation r gets its own W<sub>r</sub>, and a node's update sums contributions per relation:</p>
+
+<pre><code>h_i' = &sigma;( &sum;_{r &isin; R} &sum;_{j &isin; N_r(i)} (1/c_i,r) W_r h_j  +  W_0 h_i )</code></pre>
+
+<p>N<sub>r</sub>(i) is node i's neighborhood <em>under relation r specifically</em>, c<sub>i,r</sub> is a normalization constant (analogous to the degree normalization from the GCN lesson, but computed per relation), and W<sub>0</sub> is a self-connection term carrying the node's own features forward &mdash; the relational analogue of the self-loop.</p>
+
+<h3>The parameter-blowup problem</h3>
+
+<p>If a knowledge graph has hundreds of relation types, R-GCN needs hundreds of full-sized weight matrices. That's both a huge parameter count and a rare-relation overfitting risk &mdash; a relation seen 20 times in training doesn't have enough data to learn a whole W<sub>r</sub> from scratch. R-GCN's paper introduces two regularization schemes to solve this:</p>
+
+<ul>
+  <li><strong>Basis decomposition:</strong> every W<sub>r</sub> is written as a linear combination of a small shared set of basis matrices V<sub>1</sub>&hellip;V<sub>B</sub>, with only the per-relation coefficients a<sub>rb</sub> being relation-specific: W<sub>r</sub> = &sum;<sub>b=1</sub><sup>B</sup> a<sub>rb</sub> V<sub>b</sub>. Since B &lt;&lt; |R|, this is effective weight-sharing across relations &mdash; structurally similar relations end up leaning on similar basis combinations.</li>
+  <li><strong>Block-diagonal decomposition:</strong> each W<sub>r</sub> is constrained to be block-diagonal, so it can't mix features across blocks. This is a sparsity constraint rather than a sharing constraint &mdash; it encodes the assumption that latent features cluster into groups that interact strongly within a group and weakly across groups.</li>
+</ul>
+
+<div class="analogy">
+  <strong>Analogy:</strong> Basis decomposition for R-GCN is the same move as depthwise-separable convolutions or low-rank weight factorization in standard deep learning &mdash; express a large family of transformations as combinations of a small shared basis, trading a bit of expressiveness for a large reduction in free parameters.
+</div>
+
+<h2>HAN: meta-paths and two levels of attention</h2>
+
+<p><strong>HAN</strong> (Heterogeneous Graph Attention Network) takes a different angle. Rather than one weight matrix per raw edge type, HAN organizes computation around <strong>meta-paths</strong> &mdash; hand-specified composite relations like Author&ndash;Paper&ndash;Author ("co-authorship," two authors connected through a shared paper) or Author&ndash;Paper&ndash;Venue&ndash;Paper&ndash;Author ("published in the same venue"). For each meta-path, HAN builds a homogeneous neighborhood and applies GAT-style attention within it, then combines across meta-paths with a second attention layer:</p>
+
+<ul>
+  <li><strong>Node-level attention</strong> (intra-meta-path): for a fixed meta-path, weigh how much each meta-path neighbor matters &mdash; exactly the GAT mechanism from the architectures module, applied within one meta-path's neighborhood.</li>
+  <li><strong>Semantic-level attention</strong> (inter-meta-path): weigh how much each <em>meta-path itself</em> matters for the task &mdash; co-authorship might matter more than shared-venue for predicting research topic, for instance.</li>
+</ul>
+
+<p>HAN's strength is interpretability: you can inspect which meta-paths and which neighbors the model leaned on. Its weakness is the meta-paths are a modeling choice a human has to make in advance &mdash; the model can't discover a useful composite relation you didn't think to define.</p>
+
+<h2>HGT: attention without hand-picked meta-paths</h2>
+
+<p><strong>HGT</strong> (Heterogeneous Graph Transformer) removes that manual step. Instead of pre-defined meta-paths, HGT decomposes every edge into a <strong>meta-relation triplet</strong>: &lang;source node type, edge type, target node type&rang;. Query, key, and value projections for the transformer-style attention (recall the graph transformer lesson) are parameterized <em>per triplet</em>, so a "Paper cites Paper" edge and an "Author writes Paper" edge each get their own attention parameterization automatically, without anyone hand-designing which composite paths matter. Stacking HGT layers lets the model discover higher-order composite relations implicitly, the way stacking any message-passing layer expands the receptive field.</p>
+
+<div class="key-idea">
+  <strong>Key idea:</strong> R-GCN, HAN, and HGT all answer the same question &mdash; "how do relation-specific transformations get parameterized without the parameter count exploding?" &mdash; with three different design choices: R-GCN shares parameters via a basis of matrices, HAN shares parameters by making a human pre-specify which composite relations (meta-paths) matter, and HGT shares parameters by attention over meta-relation triplets, learning composite structure automatically.
+</div>
+
+<table style="width:100%; border-collapse:collapse; margin:1rem 0; font-size:0.85rem;">
+  <thead>
+    <tr style="border-bottom:2px solid var(--border); text-align:left;">
+      <th style="padding:0.5rem;">Model</th>
+      <th style="padding:0.5rem;">Relation handling</th>
+      <th style="padding:0.5rem;">Needs hand-picked meta-paths?</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr style="border-bottom:1px solid var(--border);">
+      <td style="padding:0.5rem;">R-GCN</td>
+      <td style="padding:0.5rem;">Per-relation weight matrix (basis / block-diagonal shared)</td>
+      <td style="padding:0.5rem;">No &mdash; operates on raw edge types</td>
+    </tr>
+    <tr style="border-bottom:1px solid var(--border);">
+      <td style="padding:0.5rem;">HAN</td>
+      <td style="padding:0.5rem;">GAT-style attention within each meta-path, then across meta-paths</td>
+      <td style="padding:0.5rem;">Yes &mdash; a human defines the meta-paths</td>
+    </tr>
+    <tr>
+      <td style="padding:0.5rem;">HGT</td>
+      <td style="padding:0.5rem;">Transformer attention parameterized per &lang;type, edge, type&rang; triplet</td>
+      <td style="padding:0.5rem;">No &mdash; composite relations emerge from stacked layers</td>
+    </tr>
+  </tbody>
+</table>
+
+<h2>Check your understanding</h2>
+
+<div class="quiz">
+  <p class="quiz-question">1. In R-GCN, why does each relation type need its own weight matrix W<sub>r</sub>?</p>
+  <ul class="quiz-options">
+    <li data-correct="true">Because different relations transform neighbor features differently</li>
+    <li data-correct="false">Because every relation needs a unique bias</li>
+    <li data-correct="false">Because shared weights increase total training time</li>
+    <li data-correct="false">Because each node type needs more features</li>
+  </ul>
+  <div class="quiz-explanation">A single shared matrix forces semantically unrelated relations (e.g., "cites" and "writes") to be squeezed through the same transformation. Relation-specific W<sub>r</sub> lets the model learn that these relations mean structurally different things.</div>
+</div>
+
+<div class="quiz">
+  <p class="quiz-question">2. What problem does R-GCN's basis decomposition address?</p>
+  <ul class="quiz-options">
+    <li data-correct="true">Too many parameters across many relations</li>
+    <li data-correct="false">Too few labeled training graph examples</li>
+    <li data-correct="false">Too slow message passing computation speed</li>
+    <li data-correct="false">Too little attention across graph layers</li>
+  </ul>
+  <div class="quiz-explanation">With hundreds of relation types, storing a full W<sub>r</sub> per relation is both expensive and prone to overfitting on rare relations. Basis decomposition writes every W<sub>r</sub> as a combination of a small shared set of basis matrices, cutting the free parameter count sharply.</div>
+</div>
+
+<div class="quiz">
+  <p class="quiz-question">3. What is a key practical advantage of HGT over HAN?</p>
+  <ul class="quiz-options">
+    <li data-correct="true">It does not require hand-designed meta-paths chosen manually</li>
+    <li data-correct="false">It does not require any labeled node features</li>
+    <li data-correct="false">It does not use self-attention over neighborhoods ever</li>
+    <li data-correct="false">It does not scale to large graphs well</li>
+  </ul>
+  <div class="quiz-explanation">HAN needs a human to pre-specify which meta-paths (e.g., Author&ndash;Paper&ndash;Author) are worth attending over. HGT instead parameterizes attention per &lang;source type, edge type, target type&rang; triplet, so composite relational patterns emerge from stacking layers rather than manual specification.</div>
+</div>
+
+<h2>Primary source</h2>
+
+<div class="source-link">
+  Watch or read: Stanford <a href="https://cs224w.stanford.edu/" target="_blank">CS224W Lecture 9</a> on heterogeneous graphs, and read Schlichtkrull et al., <a href="https://arxiv.org/abs/1703.06103" target="_blank">"Modeling Relational Data with Graph Convolutional Networks"</a> (2018) for the R-GCN architecture, including the basis and block-diagonal decompositions in full mathematical detail.
+</div>
+
+<div class="followup">
+  Questions about anything in this lesson? Ask your teacher &mdash; run <code>/teach</code> and ask about whatever is unclear. Next up: <strong>Lesson 19 &mdash; Knowledge Graphs and Embedding</strong>, where relation types become first-class citizens of the embedding space itself, not just a parameterization choice inside message passing.
+</div>
+
+<div class="nav-links">
+  <a href="0017-graph-transformers.html">&larr; Lesson 17: Graph Transformers</a>
+  <a href="0019-knowledge-graphs-and-embedding.html">Lesson 19: Knowledge Graphs and Embedding &rarr;</a>
+</div>
+
+</body>
+</html>

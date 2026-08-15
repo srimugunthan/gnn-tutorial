@@ -1,0 +1,157 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Lesson 7: GCN: Spectral Roots, Spatial Practice</title>
+  <link rel="stylesheet" href="../assets/style.css">
+  <script src="../assets/quiz.js"></script>
+</head>
+<body>
+
+<div class="lesson-number">Lesson 7</div>
+<h1>GCN: Spectral Roots, Spatial Practice</h1>
+
+<p>Lessons 4&ndash;6 gave you the generic message-passing recipe &mdash; gather messages from a node's neighborhood, aggregate them with a permutation-invariant function, update the node's representation &mdash; and showed what stacking that recipe does to a node's receptive field. Now we specialise. The <strong>Graph Convolutional Network (GCN)</strong> of Kipf &amp; Welling (2017) was the architecture that made this recipe concrete and fast enough to matter, and it did so by way of a surprising detour through spectral graph theory.</p>
+
+<h2>The limitation it solves: convolution needs a "graph Fourier transform"</h2>
+
+<p>Before GCN, the natural way to define "convolution on a graph" was to borrow directly from signal processing. A CNN's convolution is a multiplication in the <em>frequency</em> domain, made cheap by the Fast Fourier Transform. Graphs have an analogous frequency basis: the eigenvectors of the <strong>graph Laplacian</strong> L = D &minus; A. A "spectral graph convolution" filters a signal x by transforming it into this eigenbasis, multiplying by a learned filter g<sub>&theta;</sub>, and transforming back.</p>
+
+<p>This works mathematically, but it's impractical:</p>
+<ul>
+  <li><strong>Eigendecomposition is O(|V|<sup>3</sup>)</strong> &mdash; infeasible for graphs with more than a few thousand nodes.</li>
+  <li><strong>The learned filter is global</strong>, not localized to a neighborhood &mdash; every node's filter depends on the entire spectrum, which also means the number of filter parameters scales with graph size and can't transfer to a differently-sized graph.</li>
+</ul>
+
+<p>Kipf &amp; Welling's contribution was to approximate this spectral filter so aggressively that both problems vanish, leaving behind a rule that looks purely spatial &mdash; a weighted average over a node's immediate neighbors, exactly the shape of the message-passing framework from Lesson 4.</p>
+
+<h2>From spectral filter to spatial rule</h2>
+
+<p>The derivation goes through two approximation steps:</p>
+
+<ol>
+  <li><strong>Chebyshev truncation.</strong> Approximate the spectral filter g<sub>&theta;</sub> with a truncated Chebyshev polynomial expansion of the Laplacian, up to order K. This avoids the eigendecomposition entirely &mdash; polynomials of L can be applied directly &mdash; and a K-th order polynomial is exactly K-hop localized, since (L<sup>K</sup>)<sub>ij</sub> is nonzero only when i and j are within K hops.</li>
+  <li><strong>First-order truncation (K=1), linearized.</strong> GCN takes this to the extreme: K=1, and even the single remaining coefficient is fixed rather than learned. What's left is a filter that only looks at <em>direct</em> neighbors per layer &mdash; depth, not filter order, is what extends the reach, exactly as Lesson 5 described for the receptive field.</li>
+</ol>
+
+<p>After this collapse, and after a further trick to keep the eigenvalues of the propagation operator numerically well-behaved (the <strong>renormalization trick</strong>), the entire derivation reduces to one equation applied at every layer:</p>
+
+<div class="key-idea">
+  <strong>The GCN propagation rule:</strong><br>
+  H<sup>(l+1)</sup> = &sigma;( D&#771;<sup>&minus;1/2</sup> &Atilde; D&#771;<sup>&minus;1/2</sup> H<sup>(l)</sup> W<sup>(l)</sup> )<br><br>
+  where &Atilde; = A + I<sub>N</sub> (adjacency matrix <em>with self-loops added</em>), D&#771; is the degree matrix of &Atilde; (so D&#771;<sub>ii</sub> = &Sigma;<sub>j</sub> &Atilde;<sub>ij</sub>), H<sup>(l)</sup> is the matrix of node representations at layer l (H<sup>(0)</sup> = X), W<sup>(l)</sup> is a learned weight matrix shared across all nodes, and &sigma; is a nonlinearity like ReLU.
+</div>
+
+<p>Self-loops (&Atilde; = A + I) are what let a node's own features survive into the aggregate &mdash; recall from Lesson 2 that this was foreshadowed as "we'll see exactly why this matters when we derive the GCN update rule." Without them, a node's representation at each layer would depend only on its neighbors, never on itself.</p>
+
+<h2>Reading the rule as message passing</h2>
+
+<p>Mapped onto the gather &rarr; aggregate &rarr; update vocabulary from Lesson 4:</p>
+
+<ul>
+  <li><strong>Message:</strong> each neighbor j sends its current representation h<sub>j</sub>, linearly transformed by the shared W.</li>
+  <li><strong>Aggregate:</strong> a <em>weighted sum</em> over neighbors (including the node itself, via the self-loop), where the weight between i and j is D&#771;<sub>ii</sub><sup>&minus;1/2</sup> &Atilde;<sub>ij</sub> D&#771;<sub>jj</sub><sup>&minus;1/2</sup>.</li>
+  <li><strong>Update:</strong> apply the nonlinearity &sigma; to the aggregated result.</li>
+</ul>
+
+<p>The key design choice to notice: the aggregation weights are <strong>fixed by graph structure</strong> (they depend only on degrees), not learned or content-dependent. Every neighbor's contribution is determined the moment you know the graph &mdash; GCN doesn't ask "how relevant is this neighbor's <em>content</em>?" the way an attention-based architecture will in Lesson 9. It only asks "how many neighbors do you and I each have?"</p>
+
+<div class="analogy">
+  <strong>Analogy:</strong> D&#771;<sup>&minus;1/2</sup> &Atilde; D&#771;<sup>&minus;1/2</sup> is a symmetric normalization &mdash; it downweights a message twice: once for the sender's degree, once for the receiver's degree. A high-degree "hub" neighbor gets less weight per edge (its influence is spread across many neighbors), and a node with many neighbors discounts each incoming message more (it has more messages to average over). It's the graph analogue of dividing by fan-in <em>and</em> fan-out.</p>
+</div>
+
+<h2>Worked example: one GCN update, by hand</h2>
+
+<p>Reuse the four-node graph from Lesson 2 (A&ndash;B, A&ndash;C, B&ndash;C, C&ndash;D), and compute the aggregation weights feeding into node A after adding self-loops:</p>
+
+<figure>
+  <svg viewBox="0 0 260 210" width="300" xmlns="http://www.w3.org/2000/svg">
+    <line x1="70" y1="35" x2="170" y2="35" stroke="#1a1a2e" stroke-width="2"/>
+    <line x1="70" y1="35" x2="120" y2="115" stroke="#1a1a2e" stroke-width="2"/>
+    <line x1="170" y1="35" x2="120" y2="115" stroke="#1a1a2e" stroke-width="2"/>
+    <line x1="120" y1="115" x2="190" y2="175" stroke="#1a1a2e" stroke-width="2"/>
+    <path d="M 55 20 A 14 14 0 1 1 56 21" fill="none" stroke="#a94442" stroke-width="1.5"/>
+    <circle cx="70" cy="35" r="16" fill="#d8f3dc" stroke="#2d6a4f" stroke-width="2"/>
+    <text x="70" y="40" text-anchor="middle" font-size="14" font-family="Georgia, serif">A</text>
+    <circle cx="170" cy="35" r="16" fill="#d8f3dc" stroke="#2d6a4f" stroke-width="2"/>
+    <text x="170" y="40" text-anchor="middle" font-size="14" font-family="Georgia, serif">B</text>
+    <circle cx="120" cy="115" r="16" fill="#d8f3dc" stroke="#2d6a4f" stroke-width="2"/>
+    <text x="120" y="120" text-anchor="middle" font-size="14" font-family="Georgia, serif">C</text>
+    <circle cx="190" cy="175" r="16" fill="#d8f3dc" stroke="#2d6a4f" stroke-width="2"/>
+    <text x="190" y="180" text-anchor="middle" font-size="14" font-family="Georgia, serif">D</text>
+    <text x="105" y="20" font-size="11" fill="#a94442" font-family="Georgia, serif">self-loop</text>
+  </svg>
+  <figcaption>Degrees before self-loops: A=2, B=2, C=3, D=1. With self-loops added: A=3, B=3, C=4, D=2.</figcaption>
+</figure>
+
+<p>Node A's neighbors-with-self-loop are {A, B, C}, with degrees (post self-loop) D&#771;<sub>AA</sub>=3, D&#771;<sub>BB</sub>=3, D&#771;<sub>CC</sub>=4. The normalized weight for each edge is 1/&radic;(D&#771;<sub>ii</sub>D&#771;<sub>jj</sub>):</p>
+
+<pre><code>weight(A&larr;A) = 1/&radic;(3&times;3) = 0.333   (self-loop term)
+weight(A&larr;B) = 1/&radic;(3&times;3) = 0.333
+weight(A&larr;C) = 1/&radic;(3&times;4) = 0.289
+
+h_A' = &sigma;( W&middot;(0.333&middot;h_A + 0.333&middot;h_B + 0.289&middot;h_C) )</code></pre>
+
+<p>Notice node D never enters A's update directly &mdash; it's two hops away. That's the receptive-field argument from Lesson 5 again: one GCN layer only reaches 1-hop neighbors, so D's influence on A requires stacking a second layer.</p>
+
+<h2>Transductive by default</h2>
+
+<p>The propagation rule as written bakes the graph's degree matrix D&#771; and adjacency &Atilde; directly into every forward pass. That has a real consequence: the original GCN is a <strong>transductive</strong> method. It's trained and evaluated on <em>one fixed graph</em> &mdash; typically full-batch, using the entire normalized adjacency matrix at once. If a new node arrives after training, there's no defined procedure for folding it in without recomputing the normalization and, in the full-batch formulation, rerunning the model over the whole graph again.</p>
+
+<div class="key-idea">
+  <strong>Key idea:</strong> "Transductive" doesn't mean GCN can't generalize at all &mdash; it generalizes across <em>unlabeled nodes already present in the training graph</em> (that's the "semi-supervised" in the paper's title). What it doesn't natively support is generalizing to <em>nodes that didn't exist at training time</em>. That distinction becomes central in Lesson 8, and matters directly for domains like fraud detection where new accounts and transactions appear continuously.
+</div>
+
+<h2>Check your understanding</h2>
+
+<div class="quiz">
+  <p class="quiz-question">1. In the GCN propagation rule, why are self-loops added to A before normalization?</p>
+  <ul class="quiz-options">
+    <li data-correct="true">So a node's own features get included</li>
+    <li data-correct="false">So every edge receives a doubled weight</li>
+    <li data-correct="false">So the graph becomes a complete graph</li>
+    <li data-correct="false">So gradients bypass the softmax normalization step</li>
+  </ul>
+  <div class="quiz-explanation">Without &Atilde; = A + I, the aggregation would sum only over a node's neighbors and never include the node's own current representation, so each update would discard the node's prior state entirely.</div>
+</div>
+
+<div class="quiz">
+  <p class="quiz-question">2. GCN's degree normalization D&#771;<sup>&minus;1/2</sup>&Atilde;D&#771;<sup>&minus;1/2</sup>, compared to unnormalized A, mainly prevents what?</p>
+  <ul class="quiz-options">
+    <li data-correct="true">High-degree nodes dominating the aggregated signal</li>
+    <li data-correct="false">Low-degree nodes dominating the aggregated signal</li>
+    <li data-correct="false">Self-loops dominating the aggregated update signal</li>
+    <li data-correct="false">Attention weights dominating the aggregated signal</li>
+  </ul>
+  <div class="quiz-explanation">Without normalization, a node with many neighbors would sum up many unweighted messages, causing its representation's magnitude to grow with degree. Dividing by &radic;(degree) on both sides keeps the aggregated scale comparable across nodes regardless of how many neighbors they have.</div>
+</div>
+
+<div class="quiz">
+  <p class="quiz-question">3. As originally formulated, is GCN transductive or inductive, and why?</p>
+  <ul class="quiz-options">
+    <li data-correct="true">Transductive &mdash; it needs the full fixed graph structure</li>
+    <li data-correct="false">Inductive &mdash; it generalizes directly to unseen new graphs</li>
+    <li data-correct="false">Transductive &mdash; it needs labeled data for every node</li>
+    <li data-correct="false">Inductive &mdash; it samples fixed-size neighborhoods like GraphSAGE does</li>
+  </ul>
+  <div class="quiz-explanation">The propagation rule bakes the specific graph's normalized adjacency matrix into every forward pass. It's trained and evaluated on one fixed graph, and there's no built-in mechanism for folding in nodes that weren't present at training time.</div>
+</div>
+
+<h2>Primary source</h2>
+
+<div class="source-link">
+  Read: Kipf &amp; Welling, <a href="https://arxiv.org/abs/1609.02907" target="_blank">"Semi-Supervised Classification with Graph Convolutional Networks"</a> (2017), Sections 2&ndash;3 for the spectral-to-spatial derivation and the renormalization trick. For the spectral-vs-spatial framing in more visual detail, see Distill's <a href="https://distill.pub/2021/understanding-gnns/" target="_blank">"Understanding Convolutions on Graphs"</a>, &sect;5.
+</div>
+
+<div class="followup">
+  Questions about anything in this lesson? Ask your teacher &mdash; run <code>/teach</code> and ask about whatever is unclear. Next up: <strong>Lesson 8 &mdash; GraphSAGE: Inductive Learning and Sampling</strong>, where we'll see the architecture explicitly built to handle unseen nodes.
+</div>
+
+<div class="nav-links">
+  <a href="0006-over-smoothing-and-depth-problem.html">&larr; Lesson 6: Over-smoothing and the Depth Problem</a>
+  <a href="0008-graphsage-inductive-learning-and-sampling.html">Lesson 8: GraphSAGE &rarr;</a>
+</div>
+
+</body>
+</html>

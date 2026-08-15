@@ -1,0 +1,145 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Lesson 9: GAT: Attention on Graphs</title>
+  <link rel="stylesheet" href="../assets/style.css">
+  <script src="../assets/quiz.js"></script>
+</head>
+<body>
+
+<div class="lesson-number">Lesson 9</div>
+<h1>GAT: Attention on Graphs</h1>
+
+<p>GCN weighs neighbors by degree. GraphSAGE's mean and pooling aggregators weigh sampled neighbors equally, or independently through a shared MLP before a symmetric max. Neither ever asks: <em>given what this specific neighbor's features actually say, how much should I trust it?</em> The <strong>Graph Attention Network (GAT)</strong>, from Veli&#269;kovi&#263; et al. (2018), answers that question by borrowing the attention mechanism you already know from sequence models and applying it edge by edge.</p>
+
+<h2>The limitation it solves: structural weights ignore content</h2>
+
+<p>GCN's aggregation weight between nodes i and j is D&#771;<sub>ii</sub><sup>&minus;1/2</sup>D&#771;<sub>jj</sub><sup>&minus;1/2</sup> &mdash; fixed the moment you know the graph's degree sequence, regardless of what h<sub>i</sub> and h<sub>j</sub> actually contain. Two neighbors with identical degree get identical weight, even if one is far more relevant to the node's task than the other. This is a real cost: in a citation network, not every cited paper is equally informative about a paper's topic; in a transaction graph, not every counterparty is equally informative about whether an account is fraudulent.</p>
+
+<div class="key-idea">
+  <strong>Key idea:</strong> GAT replaces a <em>structure-determined</em> aggregation weight with a <em>learned, content-dependent</em> one. The weight a node assigns its neighbor is computed from both of their current feature vectors, not just from the graph's topology.
+</div>
+
+<h2>The core mechanism: self-attention over the neighborhood</h2>
+
+<p>For every edge (i, j) where j &isin; N(i) (including i itself, via a self-loop, just as in GCN), GAT computes an unnormalized attention score:</p>
+
+<div class="key-idea">
+  <strong>Attention coefficient:</strong><br>
+  e<sub>ij</sub> = LeakyReLU( a<sup>T</sup> [ Wh<sub>i</sub> &Vert; Wh<sub>j</sub> ] )<br><br>
+  where W is a shared learned linear transformation applied to every node's features, &Vert; is vector concatenation, and a is a single learned attention vector (shared across all nodes and edges) that scores how compatible the pair (Wh<sub>i</sub>, Wh<sub>j</sub>) is.
+</div>
+
+<p>These raw scores aren't comparable in scale across different neighborhoods, so they're normalized with a softmax over each node's neighbor set &mdash; exactly the aggregation step from Lesson 4, now with learned rather than fixed weights:</p>
+
+<div class="key-idea">
+  <strong>Normalized attention weight:</strong><br>
+  &alpha;<sub>ij</sub> = softmax<sub>j</sub>(e<sub>ij</sub>) = exp(e<sub>ij</sub>) / &Sigma;<sub>k&isin;N(i)</sub> exp(e<sub>ik</sub>)<br><br>
+  h<sub>i</sub>' = &sigma;( &Sigma;<sub>j&isin;N(i)</sub> &alpha;<sub>ij</sub> Wh<sub>j</sub> )
+</div>
+
+<p>Notice the shape: this is still gather &rarr; aggregate &rarr; update. What changed is <em>only</em> how the aggregation weights are produced &mdash; a learned function of content, instead of a fixed function of degree.</p>
+
+<h2>Worked example: attention weights on a 3-node star</h2>
+
+<p>Take a toy case with 1-dimensional transformed features for clarity: node i has Wh<sub>i</sub> = 1.0, and two neighbors j (Wh<sub>j</sub> = 0.5, feature-aligned with i) and k (Wh<sub>k</sub> = &minus;0.5, feature-opposed to i). Suppose the learned attention vector reduces to simply summing the pair (a = [1, 1]), and self-loops are included:</p>
+
+<pre><code>e_ii = LeakyReLU(1.0 + 1.0)  = 2.0    (self-loop)
+e_ij = LeakyReLU(1.0 + 0.5)  = 1.5
+e_ik = LeakyReLU(1.0 + -0.5) = 0.5
+
+softmax([2.0, 1.5, 0.5]) &rarr; &alpha;_ii &asymp; 0.547, &alpha;_ij &asymp; 0.331, &alpha;_ik &asymp; 0.122</code></pre>
+
+<figure>
+  <svg viewBox="0 0 260 180" width="300" xmlns="http://www.w3.org/2000/svg">
+    <line x1="130" y1="90" x2="60" y2="30" stroke="#2d6a4f" stroke-width="7"/>
+    <line x1="130" y1="90" x2="210" y2="30" stroke="#2d6a4f" stroke-width="3"/>
+    <line x1="130" y1="90" x2="80" y2="150" stroke="#2d6a4f" stroke-width="1.5"/>
+    <circle cx="130" cy="90" r="18" fill="#d8f3dc" stroke="#2d6a4f" stroke-width="2"/>
+    <text x="130" y="95" text-anchor="middle" font-size="14" font-family="Georgia, serif">i</text>
+    <circle cx="60" cy="30" r="16" fill="#fff3cd" stroke="#ffc107" stroke-width="2"/>
+    <text x="60" y="35" text-anchor="middle" font-size="14" font-family="Georgia, serif">i</text>
+    <circle cx="210" cy="30" r="16" fill="#d8f3dc" stroke="#2d6a4f" stroke-width="2"/>
+    <text x="210" y="35" text-anchor="middle" font-size="14" font-family="Georgia, serif">j</text>
+    <circle cx="80" cy="150" r="16" fill="#d8f3dc" stroke="#2d6a4f" stroke-width="2"/>
+    <text x="80" y="155" text-anchor="middle" font-size="14" font-family="Georgia, serif">k</text>
+  </svg>
+  <figcaption>Edge thickness &prop; attention weight. The self-loop (&alpha;=0.55) and the feature-aligned neighbor j (&alpha;=0.33) dominate the update; the feature-opposed neighbor k (&alpha;=0.12) contributes little &mdash; a distinction GCN's degree-only weighting could never make, since all three would sit at whatever fixed weight the degrees imply.</figcaption>
+</figure>
+
+<h2>Multi-head attention</h2>
+
+<p>A single attention mechanism can be unstable to learn and limited in what relationships it can capture, so GAT runs K independent attention heads in parallel, each with its own W<sup>k</sup> and a<sup>k</sup>. At hidden layers, their outputs are <strong>concatenated</strong>:</p>
+
+<pre><code>h_i' = &Vert;_{k=1}^{K} &sigma;( &Sigma;_{j&isin;N(i)} &alpha;_ij^k W^k h_j )</code></pre>
+
+<p>At the <em>final</em> output layer, concatenation would multiply the output dimension by K, which usually isn't what you want for a prediction head, so the heads are <strong>averaged</strong> instead:</p>
+
+<pre><code>h_i' = &sigma;( (1/K) &Sigma;_{k=1}^{K} &Sigma;_{j&isin;N(i)} &alpha;_ij^k W^k h_j )</code></pre>
+
+<div class="analogy">
+  <strong>Analogy:</strong> Multi-head attention here plays the same role it does in a Transformer: each head can specialize in a different notion of "relevance" (one head might key off feature similarity, another off something else entirely), and concatenating hidden-layer outputs lets downstream layers combine those perspectives, exactly as multi-head self-attention does over tokens.
+</div>
+
+<h2>What's new, and why it's efficient too</h2>
+
+<p>Two properties worth naming explicitly:</p>
+<ul>
+  <li><strong>No graph-global computation.</strong> Unlike the spectral derivation behind GCN, GAT's attention mechanism is defined purely locally &mdash; a is shared, but it's applied identically to every edge without reference to the graph's eigenstructure, degree matrix, or size. This also makes it naturally parallelizable across edges.</li>
+  <li><strong>Shared, graph-agnostic parameters.</strong> W and a don't depend on which node or graph they're applied to &mdash; only on the pair of feature vectors in front of them. That's the same property that made GraphSAGE inductive in Lesson 8, and the GAT paper explicitly validates this: it's tested on the same inductive PPI benchmark as GraphSAGE, in addition to transductive citation-network benchmarks. GAT's transductive-vs-inductive behavior depends on how it's trained and deployed, not on a structural constraint in the layer itself, the way GCN's fixed normalization is.</li>
+</ul>
+
+<h2>Check your understanding</h2>
+
+<div class="quiz">
+  <p class="quiz-question">1. What information does GCN's fixed normalization ignore that GAT's attention coefficients use?</p>
+  <ul class="quiz-options">
+    <li data-correct="true">The content of each neighbor's features</li>
+    <li data-correct="false">The degree of each neighbor's node</li>
+    <li data-correct="false">The distance of each neighbor's edge</li>
+    <li data-correct="false">The label of each neighbor's class</li>
+  </ul>
+  <div class="quiz-explanation">GCN's weight D&#771;<sub>ii</sub><sup>&minus;1/2</sup>D&#771;<sub>jj</sub><sup>&minus;1/2</sup> depends only on degree. GAT computes e<sub>ij</sub> from a learned function of Wh<sub>i</sub> and Wh<sub>j</sub> themselves, so two neighbors with the same degree can still receive very different attention weights.</div>
+</div>
+
+<div class="quiz">
+  <p class="quiz-question">2. Which operation in GAT ensures that a node's attention weights over its neighbors sum to one?</p>
+  <ul class="quiz-options">
+    <li data-correct="true">The softmax normalization over neighbors</li>
+    <li data-correct="false">The LeakyReLU activation over neighbors</li>
+    <li data-correct="false">The degree normalization over neighbors</li>
+    <li data-correct="false">The mean aggregation over neighbors</li>
+  </ul>
+  <div class="quiz-explanation">LeakyReLU produces the raw, unbounded score e<sub>ij</sub>. The softmax, applied over all of node i's neighbors (including itself via the self-loop), is what turns those raw scores into normalized weights &alpha;<sub>ij</sub> that sum to one.</div>
+</div>
+
+<div class="quiz">
+  <p class="quiz-question">3. Why does GAT average attention heads at the final output layer instead of concatenating them, as it does at hidden layers?</p>
+  <ul class="quiz-options">
+    <li data-correct="true">Concatenating there would make output dimension head-count dependent</li>
+    <li data-correct="false">Averaging there always improves classification accuracy more substantially</li>
+    <li data-correct="false">Concatenating there would violate the permutation invariance property</li>
+    <li data-correct="false">Averaging there removes the need for a softmax</li>
+  </ul>
+  <div class="quiz-explanation">Concatenating K heads multiplies the representation width by K at every layer, which is fine internally but inconvenient at the final layer, where the output dimension should match the task (e.g. number of classes) rather than scale with the number of attention heads.</div>
+</div>
+
+<h2>Primary source</h2>
+
+<div class="source-link">
+  Read: Veli&#269;kovi&#263; et al., <a href="https://arxiv.org/abs/1710.10903" target="_blank">"Graph Attention Networks"</a> (2018), Section 2 for the attention mechanism and Section 3 for how it compares to GCN and GraphSAGE, including the inductive PPI results.
+</div>
+
+<div class="followup">
+  Questions about anything in this lesson? Ask your teacher &mdash; run <code>/teach</code> and ask about whatever is unclear. Next up: <strong>Lesson 10 &mdash; GIN: Maximising Expressiveness</strong>, where we ask a harder question: not just how to weigh neighbors, but what any GNN can and can't tell apart at all.
+</div>
+
+<div class="nav-links">
+  <a href="0008-graphsage-inductive-learning-and-sampling.html">&larr; Lesson 8: GraphSAGE</a>
+  <a href="0010-gin-maximising-expressiveness.html">Lesson 10: GIN &rarr;</a>
+</div>
+
+</body>
+</html>

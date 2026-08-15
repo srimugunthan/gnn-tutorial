@@ -1,0 +1,139 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Lesson 16: Geometric Deep Learning: The Symmetry Perspective</title>
+  <link rel="stylesheet" href="../assets/style.css">
+  <script src="../assets/quiz.js"></script>
+</head>
+<body>
+
+<div class="lesson-number">Lesson 16</div>
+<h1>Geometric Deep Learning: The Symmetry Perspective</h1>
+
+<p>Lesson 1 introduced permutation equivariance as GNNs' defining property, and drew a quick analogy: a CNN is a GNN on a grid graph with weight-sharing across the kernel; an RNN is a GNN on a chain graph with weight-sharing across time steps. This lesson takes that analogy and makes it load-bearing. It's not a loose metaphor &mdash; it's one instance of a single unifying principle that Bronstein, Bruna, Cohen, and Veli&#269;kovi&#263; formalize as the "geometric deep learning blueprint," and it's the most direct way to place any new architecture &mdash; GNN or otherwise &mdash; on a map.</p>
+
+<h2>The blueprint: domain, symmetry, invariance</h2>
+
+<p>Every architecture in the blueprint is described by the same three ingredients:</p>
+
+<ul>
+  <li><strong>Domain.</strong> The structure the data lives on &mdash; a grid, a graph, a manifold.</li>
+  <li><strong>Symmetry group.</strong> The set of transformations of that domain that shouldn't change what the network computes &mdash; translations of a grid, permutations of a graph's nodes, rotations of a sphere.</li>
+  <li><strong>Invariance / equivariance.</strong> The network's layers are built to respect that symmetry: shift the input according to the group, and the output either stays the same (invariance) or shifts the same way (equivariance) &mdash; exactly the node-level vs. graph-level distinction from Lesson 1's glossary terms, generalized to any domain.</li>
+</ul>
+
+<p>Two further biases recur across the blueprint's architectures: <strong>locality</strong> (a layer only looks at a small neighborhood in the domain before combining wider context across layers) and <strong>scale separation</strong> (fine-grained local patterns can be composed into coarser ones by stacking layers or pooling). Both should sound familiar &mdash; they're exactly what stacking message-passing layers and pooling do in a GNN (Lessons 5 and 12).</p>
+
+<div class="key-idea">
+  <strong>Key idea:</strong> An architecture family isn't defined by "what layers it stacks" &mdash; it's defined by which symmetry group it's built to respect. Once you know the domain and the group, the rest of the architecture (weight sharing, locality, pooling) follows close to automatically.
+</div>
+
+<h2>The five geometries</h2>
+
+<p>The blueprint organizes deep learning's major architecture families by exactly this domain/symmetry pairing &mdash; sometimes called the "5 Gs":</p>
+
+<table style="width:100%; border-collapse:collapse; margin:1rem 0; font-size:0.9rem;">
+  <thead>
+    <tr style="border-bottom:2px solid var(--border); text-align:left;">
+      <th style="padding:0.5rem;">Domain</th>
+      <th style="padding:0.5rem;">Symmetry group</th>
+      <th style="padding:0.5rem;">Architecture</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr style="border-bottom:1px solid var(--border);">
+      <td style="padding:0.5rem;">Grids</td>
+      <td style="padding:0.5rem;">Translation</td>
+      <td style="padding:0.5rem;">CNNs</td>
+    </tr>
+    <tr style="border-bottom:1px solid var(--border);">
+      <td style="padding:0.5rem;">Groups</td>
+      <td style="padding:0.5rem;">Rotation, reflection, general Lie/discrete groups</td>
+      <td style="padding:0.5rem;">Group-equivariant networks</td>
+    </tr>
+    <tr style="border-bottom:1px solid var(--border);">
+      <td style="padding:0.5rem;">Graphs (&amp; sets)</td>
+      <td style="padding:0.5rem;">Permutation</td>
+      <td style="padding:0.5rem;">GNNs, DeepSets</td>
+    </tr>
+    <tr style="border-bottom:1px solid var(--border);">
+      <td style="padding:0.5rem;">Geodesics &amp; manifolds</td>
+      <td style="padding:0.5rem;">Isometry (distance-preserving deformation)</td>
+      <td style="padding:0.5rem;">Mesh / manifold networks</td>
+    </tr>
+    <tr>
+      <td style="padding:0.5rem;">Gauges</td>
+      <td style="padding:0.5rem;">Gauge symmetry (local frame choice)</td>
+      <td style="padding:0.5rem;">Gauge-equivariant networks</td>
+    </tr>
+  </tbody>
+</table>
+
+<p>The grids row is the one you already know cold: a convolution kernel is the same weights applied at every pixel position, which is exactly what makes a CNN invariant/equivariant to translation. The graphs row is the one this course has spent fourteen lessons on: message passing shares the same AGGREGATE/COMBINE function across every node, which is exactly what makes a GNN equivariant to node permutation. Same mechanism &mdash; weight sharing dictated by a symmetry group &mdash; different group.</p>
+
+<div class="analogy">
+  <strong>Analogy:</strong> Grids and graphs sit at opposite ends of a structure spectrum. A grid gives every node the same fixed set of neighbor <em>offsets</em> (up, down, left, right), so the shared kernel can key its weights on position-in-the-neighborhood ("the weight for the pixel above me"). A graph gives no such canonical ordering of neighbors at all, so the shared function has to be defined over an unordered multiset instead &mdash; which is precisely why permutation invariance of the aggregation step (Lesson 4) isn't a nice-to-have, it's forced by the symmetry group graphs are equivariant to.
+</div>
+
+<h2>Manifolds and gauges, briefly</h2>
+
+<p>The other two rows extend the same idea to continuous, curved domains &mdash; meshes, point clouds, spheres &mdash; that show up in molecular surfaces, 3D shape analysis, and physics-informed models. A mesh network is built to be equivariant under isometries (deforming a surface without stretching it), and gauge-equivariant networks additionally handle the fact that there's no single consistent way to define "up" or "right" at every point on a curved surface, so the network has to be invariant to the arbitrary local coordinate frame ("gauge") chosen at each point. Both are out of scope for this course's depth, but knowing they exist &mdash; and that they're graphs' natural neighbors in the same framework, not an unrelated topic &mdash; is the point of the map.</p>
+
+<h2>Where the Transformer fits</h2>
+
+<p>One more placement worth making explicit, since it sets up the next lesson: a Transformer's self-attention layer, applied to a set of tokens with no positional information, is permutation-equivariant over that set &mdash; the same symmetry group as a GNN. In fact it's the special case of a GNN operating on the <em>complete graph</em> (every token attends to every other token, i.e. every node is connected to every other node). Language and vision Transformers add back the sequence/grid structure through positional encodings; Lesson 17 asks what the equivalent move looks like when the domain is an arbitrary graph rather than a sequence.</p>
+
+<h2>Check your understanding</h2>
+
+<div class="quiz">
+  <p class="quiz-question">1. In the geometric deep learning blueprint, what does the CNN's convolution kernel weight-sharing correspond to?</p>
+  <ul class="quiz-options">
+    <li data-correct="true">Invariance under the translation group</li>
+    <li data-correct="false">Invariance under the permutation group</li>
+    <li data-correct="false">Invariance under the rotation group</li>
+    <li data-correct="false">Invariance under the reflection group</li>
+  </ul>
+  <div class="quiz-explanation">A convolution kernel applies the same weights at every spatial position, which is exactly the weight-sharing scheme that makes a CNN equivariant to shifting (translating) the input image.</div>
+</div>
+
+<div class="quiz">
+  <p class="quiz-question">2. Which architecture family corresponds to the "graphs" domain in the geometric deep learning blueprint?</p>
+  <ul class="quiz-options">
+    <li data-correct="true">Graph neural networks</li>
+    <li data-correct="false">Convolutional neural networks</li>
+    <li data-correct="false">Recurrent neural networks</li>
+    <li data-correct="false">Group equivariant networks</li>
+  </ul>
+  <div class="quiz-explanation">Graphs carry no canonical node ordering, so their symmetry group is the permutation group &mdash; and GNNs are the architecture family built to be equivariant to exactly that group, via permutation-invariant aggregation.</div>
+</div>
+
+<div class="quiz">
+  <p class="quiz-question">3. How does the blueprint describe the relationship between CNNs, GNNs, and Transformers?</p>
+  <ul class="quiz-options">
+    <li data-correct="true">They share one symmetry framework</li>
+    <li data-correct="false">They share one training framework</li>
+    <li data-correct="false">They share one pooling framework</li>
+    <li data-correct="false">They share one pruning framework</li>
+  </ul>
+  <div class="quiz-explanation">The blueprint's claim isn't about a shared training recipe or shared pooling scheme &mdash; it's that all three architectures are instances of the same domain/symmetry-group/(in)variance construction, just with different groups (translation, permutation, and permutation-over-the-complete-graph, respectively).</div>
+</div>
+
+<h2>Primary source</h2>
+
+<div class="source-link">
+  Read: <a href="https://geometricdeeplearning.com/" target="_blank">"Geometric Deep Learning: Grids, Groups, Graphs, Geodesics, and Gauges"</a> by Bronstein, Bruna, Cohen, and Veli&#269;kovi&#263; (2021). Dense but conceptually powerful &mdash; the proto-book and lecture slides on the site are more approachable than the full arXiv preprint as a first pass. Focus on the "Blueprint of Geometric Deep Learning" section for the domain/symmetry/invariance framing used in this lesson.
+</div>
+
+<div class="followup">
+  Questions about anything in this lesson? Ask your teacher &mdash; run <code>/teach</code> and ask about whatever is unclear. Next up: <strong>Lesson 17 &mdash; Graph Transformers</strong>, where we take the "Transformer = GNN on the complete graph" placement from this lesson and ask what has to be added back to make that useful.
+</div>
+
+<div class="nav-links">
+  <a href="0015-weisfeiler-leman-hierarchy.html">&larr; Lesson 15: The Weisfeiler-Leman Hierarchy</a>
+  <a href="0017-graph-transformers.html">Lesson 17: Graph Transformers &rarr;</a>
+</div>
+
+</body>
+</html>
